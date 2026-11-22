@@ -17,9 +17,12 @@ mkdirSync(outputDir, { recursive: true })
 
 run('pnpm', ['run', 'build:web'])
 run('node', ['./scripts/sync-web-assets.mjs'])
+// 独立版采用纯 Go 构建，避免 C 编译器引入 GOAMD64 无法约束的指令。
 run('go', ['build', '-trimpath', '-ldflags', `-X mihomo-manager/internal/buildinfo.Version=${version}`, '-o', join(outputDir, binaryName), './cmd/managerd'], {
+  CGO_ENABLED: '0',
   GOOS: target.os,
   GOARCH: target.arch,
+  GOAMD64: 'v1',
 }, false)
 
 function run(command, args, extraEnv = {}, shell = true) {

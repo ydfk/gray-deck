@@ -22,7 +22,7 @@ COPY --from=web-builder /workspace/web/dist ./internal/webui/dist
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=0.0.0-dev
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X mihomo-manager/internal/buildinfo.Version=${VERSION}" -o /out/managerd ./cmd/managerd
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOAMD64=v1 go build -trimpath -ldflags "-X mihomo-manager/internal/buildinfo.Version=${VERSION}" -o /out/managerd ./cmd/managerd
 
 FROM alpine:3.21 AS runtime
 WORKDIR /opt/graydeck

@@ -62,6 +62,17 @@ jobs:
         run: |
           pnpm run build:standalone -- --target=linux-amd64 --version="${{ steps.version.outputs.value }}"
           pnpm run build:standalone -- --target=windows-amd64 --version="${{ steps.version.outputs.value }}"
+      - name: Verify Linux amd64 compatibility
+        run: |
+          binary=dist/graydeck-linux-amd64
+          metadata="$(go version -m "$binary")"
+          grep -Fx $'\tbuild\tCGO_ENABLED=0' <<< "$metadata"
+          grep -Fx $'\tbuild\tGOAMD64=v1' <<< "$metadata"
+          headers="$(readelf --program-headers "$binary")"
+          if grep -qw INTERP <<< "$headers"; then
+            echo "Linux amd64 release must not require a dynamic loader." >&2
+            exit 1
+          fi
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
