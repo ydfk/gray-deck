@@ -83,9 +83,47 @@ docker compose up -d
 
 > 只使用 HTTP/SOCKS 代理时可以移除 `NET_ADMIN` 和 `/dev/net/tun`；需要 TUN 或透明代理时保留。
 
-### Standalone
+### 非 Docker 安装与更新
 
-Release 页面提供 x86_64 单文件产物（`graydeck-linux-amd64` / `graydeck-windows-amd64.exe`），内置前端管理页，直接运行即可。程序会在运行目录下创建 `config/` 和 `data/` 目录。
+#### Linux x86_64（Debian / Ubuntu，systemd）
+
+一键下载最新版并安装为 `graydeck.service`，默认工作目录为 `/opt/graydeck`。需要 Bash、curl 和 systemd。
+
+```bash
+( script="$(mktemp)" && trap 'rm -f -- "$script"' EXIT &&
+  curl -fsSL https://raw.githubusercontent.com/ydfk/gray-deck/main/scripts/install-debian-systemd.sh -o "$script" &&
+  sudo bash "$script" install )
+```
+
+默认访问 `http://服务器地址:8080`。首次安装会生成 `admin` 的密码，脚本完成后会显示登录配置文件路径。可用 `systemctl status graydeck.service` 查看服务状态。
+
+已有 systemd 安装可在控制台「Graydeck」一栏点击 **更新 Graydeck**。也可在原服务器运行以下命令，脚本从服务配置找到原可执行文件，保留原工作目录、配置和数据。
+
+```bash
+( script="$(mktemp)" && trap 'rm -f -- "$script"' EXIT &&
+  curl -fsSL https://raw.githubusercontent.com/ydfk/gray-deck/main/scripts/install-debian-systemd.sh -o "$script" &&
+  sudo bash "$script" update )
+```
+
+非默认服务名可在 sudo 后传入 `env GRAYDECK_SERVICE_NAME=自定义服务名`。手动运行 Linux 单文件的用户，可把最后一行改成 `bash "$script" update /原路径/graydeck-linux-amd64`，再从原工作目录启动。更新会保留一个 `.previous` 可执行文件备份。
+
+#### Windows x64（PowerShell）
+
+一键安装到 `%LOCALAPPDATA%\Graydeck` 并启动。默认访问 `http://localhost:8080`，首次安装会生成 `admin` 的密码，并显示登录配置文件路径。
+
+```powershell
+$script = Join-Path $env:TEMP ('graydeck-install-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+try {
+    Invoke-WebRequest 'https://raw.githubusercontent.com/ydfk/gray-deck/main/scripts/install-standalone.ps1' -UseBasicParsing -OutFile $script -ErrorAction Stop
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Mode Install
+} finally {
+    Remove-Item -LiteralPath $script -ErrorAction SilentlyContinue
+}
+```
+
+更新时把 `-Mode Install` 改成 `-Mode Update`。之前手动安装在其他位置的实例，追加 `-BinaryPath 'D:\Graydeck\graydeck-windows-amd64.exe'`。如果原工作目录与程序目录不同，再传入 `-WorkingDirectory`。脚本会重启原先正在运行的实例，并保留原配置、数据和一份 `.previous` 可执行文件备份。
+
+也可在 [GitHub Releases](https://github.com/ydfk/gray-deck/releases/latest) 下载带内置管理页的独立程序。手动更新时，退出原程序及其 Mihomo 核心，把新文件替换到原路径，再从原工作目录启动。
 
 ## 配置
 
