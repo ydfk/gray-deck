@@ -6,6 +6,11 @@ services:
     image: your-dockerhub-user/graydeck:latest
     container_name: graydeck
     restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "8080:8080"
       - "7890:17890/tcp"

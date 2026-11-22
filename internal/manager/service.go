@@ -46,6 +46,7 @@ type Service struct {
 	logs               []model.LogEntry
 	syncStopCh         chan struct{}
 	subscriptionSyncMu sync.Mutex
+	traffic            *trafficCollector
 }
 
 func New(cfg Config) (*Service, error) {
@@ -76,6 +77,7 @@ func New(cfg Config) (*Service, error) {
 	service.loadInstalledVersions()
 	service.loadRuntimeConfigStatus()
 	service.loadAppConfigStatus()
+	service.initTrafficCollector()
 	service.appendLog("Graydeck 服务初始化完成")
 
 	service.setRuntimeStatus("stopped", "未找到可用配置文件")
@@ -85,6 +87,7 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	go service.autoSyncLoop()
+	go service.trafficLoop()
 
 	return service, nil
 }
@@ -449,7 +452,10 @@ func (s *Service) BaseConfigPath() string {
 }
 
 func (s *Service) ControllerURL() string {
-	controllerAddr := s.runtimeControllerAddr()
+	return controllerURL(s.runtimeControllerAddr())
+}
+
+func controllerURL(controllerAddr string) string {
 	if strings.HasPrefix(controllerAddr, "http://") || strings.HasPrefix(controllerAddr, "https://") {
 		return controllerAddr
 	}
@@ -639,6 +645,8 @@ func (s *Service) stopCore() {
 		return
 	}
 
+	s.sampleTraffic()
+	s.saveTraffic()
 	_ = command.Process.Kill()
 	if done == nil {
 		return

@@ -119,6 +119,11 @@ update:
   proxy-url: https://ghfast.top/
 zashboard:
   hide-settings: true
+traffic:
+  # start: "1 00:00"
+  # end: "1 00:00"
+  retention-months: 12
+  max-size-mib: 32
 `) + "\n"
 }
 

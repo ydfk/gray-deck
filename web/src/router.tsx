@@ -51,6 +51,7 @@ export const router = createBrowserRouter([
     element: <AuthGate />,
     children: [
       { index: true, element: <OverviewPage /> },
+      { path: "traffic", lazy: () => import("@/ui/pages/TrafficPage") },
       { path: "zashboard", element: <ZashboardPage /> },
       { path: "logs", element: <LogsPage /> },
       { path: "*", element: <Navigate replace to="/" /> },

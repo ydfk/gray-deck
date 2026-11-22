@@ -68,3 +68,32 @@ export type LogEntry = {
 export type LogListResponse = {
   items: LogEntry[];
 };
+
+export type TrafficBytes = {
+  upload: number;
+  download: number;
+};
+
+type TrafficPeriod = {
+  id: string;
+  start: string;
+  end: string;
+  partial: boolean;
+};
+
+export type TrafficReport = {
+  currentPeriod: string;
+  period: TrafficPeriod;
+  periods: TrafficPeriod[];
+  cycleStart: string;
+  cycleEnd: string;
+  periodOpen: boolean;
+  retentionMonths: number;
+  maxSizeMiB: number;
+  timezone: string;
+  sampling: boolean;
+  lastSampleAt: string;
+  storageError: boolean;
+  totals: TrafficBytes;
+  items: (TrafficBytes & { kind: "user" | "ip" | "unknown"; name: string })[];
+};

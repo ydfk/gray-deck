@@ -10,3 +10,9 @@ update:
   proxy-url: https://ghfast.top/
 zashboard:
   hide-settings: true
+traffic:
+  # 填写格式为「日 HH:MM」，省略结束时间则在下一周期开始时结束。
+  # start: "1 00:00"
+  # end: "1 00:00"
+  retention-months: 12
+  max-size-mib: 32

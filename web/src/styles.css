@@ -463,6 +463,68 @@ select.table-input {
   padding: 6px 12px;
 }
 
+.traffic-filters,
+.traffic-summary-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px 24px;
+}
+
+.traffic-filters label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  max-width: 100%;
+}
+
+.traffic-filters select {
+  min-height: 44px;
+  font: inherit;
+}
+
+.traffic-filters select:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.traffic-summary-heading span,
+.traffic-totals dt {
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.traffic-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.traffic-totals > div {
+  padding: 12px 16px;
+  border-radius: var(--radius-card);
+  background: var(--surface-muted);
+  box-shadow: var(--shadow-soft);
+}
+
+.traffic-totals dd {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-table td:first-child {
+  overflow-wrap: anywhere;
+}
+
+.traffic-table :is(th, td):not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .update-source-row {
   display: flex;
   gap: 8px;

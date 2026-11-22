@@ -21,6 +21,7 @@ export function AppLayout() {
 
   const navItems = [
     { to: "/", label: t("nav.overview"), end: true },
+    { to: "/traffic", label: t("nav.traffic") },
     { to: "/zashboard", label: t("nav.zashboard") },
     { to: "/logs", label: t("nav.logs") },
   ];
