@@ -31,3 +31,32 @@ func (r *Router) handleTraffic(w http.ResponseWriter, req *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, report)
 }
+
+func (r *Router) handleTrafficConnections(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if req.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	params := req.URL.Query()
+	group := params.Get("groupBy")
+	if group != "" && group != "user" && group != "ip" {
+		http.Error(w, "invalid groupBy", http.StatusBadRequest)
+		return
+	}
+	report, err := r.service.TrafficConnections(manager.TrafficConnectionQuery{
+		Period: params.Get("period"), ByUser: group != "ip", Kind: params.Get("kind"), Subject: params.Get("subject"),
+		Search: params.Get("search"), Cursor: params.Get("cursor"),
+	})
+	switch {
+	case errors.Is(err, manager.ErrTrafficDetailQuery):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, manager.ErrTrafficPeriod):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	default:
+		writeJSON(w, http.StatusOK, report)
+	}
+}

@@ -97,3 +97,31 @@ export type TrafficReport = {
   totals: TrafficBytes;
   items: (TrafficBytes & { kind: "user" | "ip" | "unknown"; name: string })[];
 };
+
+export type TrafficConnection = TrafficBytes & {
+  id: string;
+  startedAt: string;
+  lastSeenAt: string;
+  sourceIP?: string;
+  inboundUser?: string;
+  host?: string;
+  sniffHost?: string;
+  destinationIP?: string;
+  destinationPort?: string;
+  network?: string;
+  inboundType?: string;
+  inboundName?: string;
+  node?: string;
+  route?: string[];
+  rule?: string;
+  rulePayload?: string;
+};
+
+export type TrafficConnectionReport = {
+  retentionDays: number;
+  maxSizeMiB: number;
+  maxRecords: number;
+  storageError: boolean;
+  nextCursor?: string;
+  items: TrafficConnection[];
+};

@@ -124,6 +124,8 @@ traffic:
   # end: "1 00:00"
   retention-months: 12
   max-size-mib: 32
+  detail-retention-days: 7
+  detail-max-size-mib: 16
 `) + "\n"
 }
 

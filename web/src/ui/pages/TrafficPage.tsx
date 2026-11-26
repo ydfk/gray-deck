@@ -4,6 +4,7 @@ import { apiGet } from '@/api/client'
 import { useI18n } from '@/i18n/I18nProvider'
 import type { TrafficReport } from '@/types/api'
 import { Panel } from '@/ui/components/Panel'
+import { TrafficConnections } from '@/ui/components/TrafficConnections'
 
 const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
 
@@ -31,7 +32,7 @@ export function Component() {
   const bytes = (size: number) => displayBytes(size, numberFormat)
 
   return (
-    <div className="page-grid">
+    <div className="page-grid traffic-page">
       <Panel title={t('nav.traffic')} description={t('traffic.description')}>
         <div className="traffic-filters">
           <label>
@@ -118,6 +119,15 @@ export function Component() {
           </>
         ) : null}
       </Panel>
+      {report && !query.isPlaceholderData ? (
+        <TrafficConnections
+          key={`${report.period.id}:${group}`}
+          period={report.period.id}
+          group={group}
+          subjects={report.items}
+          formatBytes={bytes}
+        />
+      ) : null}
     </div>
   )
 }

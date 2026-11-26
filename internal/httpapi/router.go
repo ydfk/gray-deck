@@ -60,6 +60,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/subscriptions/preview", r.requireAuthAPI(r.handleSubscriptionPreview))
 	r.mux.HandleFunc("/api/logs", r.requireAuthAPI(r.handleLogs))
 	r.mux.HandleFunc("/api/traffic", r.requireAuthAPI(r.handleTraffic))
+	r.mux.HandleFunc("/api/traffic/connections", r.requireAuthAPI(r.handleTrafficConnections))
 	r.mux.Handle("/api/clash/", r.buildClashProxy())
 	r.mux.Handle("/api/clash", r.buildClashProxy())
 	r.mux.Handle("/zashboard-ui/", r.buildZashboardHandler())

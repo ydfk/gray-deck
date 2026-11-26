@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type TrafficBytes struct {
 	Upload   uint64 `json:"upload"`
 	Download uint64 `json:"download"`
@@ -33,4 +35,33 @@ type TrafficReport struct {
 	StorageError  bool            `json:"storageError"`
 	Totals        TrafficBytes    `json:"totals"`
 	Items         []TrafficRow    `json:"items"`
+}
+
+type TrafficConnectionDetail struct {
+	ID              string    `json:"id"`
+	StartedAt       time.Time `json:"startedAt"`
+	LastSeenAt      time.Time `json:"lastSeenAt"`
+	SourceIP        string    `json:"sourceIP,omitempty"`
+	InboundUser     string    `json:"inboundUser,omitempty"`
+	Host            string    `json:"host,omitempty"`
+	SniffHost       string    `json:"sniffHost,omitempty"`
+	DestinationIP   string    `json:"destinationIP,omitempty"`
+	DestinationPort string    `json:"destinationPort,omitempty"`
+	Network         string    `json:"network,omitempty"`
+	InboundType     string    `json:"inboundType,omitempty"`
+	InboundName     string    `json:"inboundName,omitempty"`
+	Node            string    `json:"node,omitempty"`
+	Route           []string  `json:"route,omitempty"`
+	Rule            string    `json:"rule,omitempty"`
+	RulePayload     string    `json:"rulePayload,omitempty"`
+	TrafficBytes
+}
+
+type TrafficConnectionReport struct {
+	RetentionDays int                       `json:"retentionDays"`
+	MaxSizeMiB    int                       `json:"maxSizeMiB"`
+	MaxRecords    int                       `json:"maxRecords"`
+	StorageError  bool                      `json:"storageError"`
+	NextCursor    string                    `json:"nextCursor,omitempty"`
+	Items         []TrafficConnectionDetail `json:"items"`
 }

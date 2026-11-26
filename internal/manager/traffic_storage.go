@@ -12,8 +12,12 @@ func (s *Service) saveTraffic() {
 	if s.traffic == nil {
 		return
 	}
-	if err := s.traffic.save(time.Now()); err != nil {
+	now := time.Now()
+	if err := s.traffic.save(now); err != nil {
 		s.appendLogf("保存流量历史失败：%v", err)
+	}
+	if err := s.traffic.saveDetails(now); err != nil {
+		s.appendLogf("保存连接明细失败：%v", err)
 	}
 }
 

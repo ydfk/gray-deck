@@ -42,12 +42,9 @@ func (c *trafficCollector) report(at time.Time, selected string, byUser, coreRun
 		report.LastSampleAt = c.state.SampledAt.In(c.location).Format(localTimeLayout)
 	}
 
-	for index := 0; index < c.policy.retentionMonths; index++ {
-		start, end := c.policy.bounds(current.AddDate(0, -index, 0))
+	for _, window := range c.trafficWindows(current) {
+		start, end := window.start, window.end
 		startKey, endKey := start.Format(trafficKeyLayout), end.Format(trafficKeyLayout)
-		if index > 0 && (c.state.StartedAt.IsZero() || !end.After(c.state.StartedAt) || endKey <= c.state.PrunedThrough) {
-			break
-		}
 		period := model.TrafficPeriod{
 			ID: start.Format(time.DateOnly), Start: start.Format("2006-01-02 15:04"), End: end.Format("2006-01-02 15:04"),
 			Partial: startKey <= c.state.PrunedThrough,
@@ -66,6 +63,31 @@ func (c *trafficCollector) report(at time.Time, selected string, byUser, coreRun
 
 type trafficSubject struct{ kind, name string }
 
+type trafficWindow struct{ start, end time.Time }
+
+func (c *trafficCollector) trafficWindows(current time.Time) []trafficWindow {
+	windows := make([]trafficWindow, 0, c.policy.retentionMonths)
+	for index := 0; index < c.policy.retentionMonths; index++ {
+		start, end := c.policy.bounds(current.AddDate(0, -index, 0))
+		if index > 0 && (c.state.StartedAt.IsZero() || !end.After(c.state.StartedAt) || end.Format(trafficKeyLayout) <= c.state.PrunedThrough) {
+			break
+		}
+		windows = append(windows, trafficWindow{start, end})
+	}
+	return windows
+}
+
+func subjectForTraffic(ip, user string, byUser bool) trafficSubject {
+	switch {
+	case byUser && user != "":
+		return trafficSubject{kind: "user", name: user}
+	case ip != "":
+		return trafficSubject{kind: "ip", name: ip}
+	default:
+		return trafficSubject{kind: "unknown"}
+	}
+}
+
 func (c *trafficCollector) usage(start, end string, byUser bool) ([]model.TrafficRow, model.TrafficBytes) {
 	grouped := make(map[trafficSubject]model.TrafficBytes)
 	var totals model.TrafficBytes
@@ -75,13 +97,7 @@ func (c *trafficCollector) usage(start, end string, byUser bool) ([]model.Traffi
 		}
 		for ip, users := range bucket {
 			for user, usage := range users {
-				subject := trafficSubject{kind: "ip", name: ip}
-				switch {
-				case byUser && user != "":
-					subject = trafficSubject{kind: "user", name: user}
-				case ip == "":
-					subject.kind = "unknown"
-				}
+				subject := subjectForTraffic(ip, user, byUser)
 				total := grouped[subject]
 				total.Upload += usage.Upload
 				total.Download += usage.Download

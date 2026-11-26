@@ -525,6 +525,52 @@ select.table-input {
   font-variant-numeric: tabular-nums;
 }
 
+.traffic-page > .panel {
+  min-width: 0;
+}
+
+.traffic-connection-filters {
+  align-items: flex-end;
+}
+
+.traffic-connection-filters > label:first-child {
+  flex: 0 1 230px;
+}
+
+.traffic-connection-search {
+  flex: 1 1 220px;
+}
+
+.traffic-connection-filters :is(input, button) {
+  min-height: 44px;
+}
+
+.traffic-connection-scroll:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.traffic-connection-table {
+  min-width: 880px;
+}
+
+.traffic-connection-table time,
+.traffic-connection-usage {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-connection-table td {
+  overflow-wrap: anywhere;
+}
+
+.traffic-connection-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .update-source-row {
   display: flex;
   gap: 8px;

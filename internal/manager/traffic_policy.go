@@ -15,6 +15,8 @@ const (
 	trafficKeyLayout       = "2006-01-02T15:04"
 	defaultRetentionMonths = 12
 	defaultTrafficSizeMiB  = 32
+	defaultDetailDays      = 7
+	defaultDetailSizeMiB   = 16
 	trafficMiB             = 1024 * 1024
 )
 
@@ -28,11 +30,16 @@ type trafficPolicy struct {
 	start, end      trafficClock
 	retentionMonths int
 	maxBytes        int
+	detailDays      int
+	detailMaxBytes  int
 }
 
 func defaultTrafficPolicy(day int) trafficPolicy {
 	boundary := trafficClock{day: day}
-	return trafficPolicy{start: boundary, end: boundary, retentionMonths: defaultRetentionMonths, maxBytes: defaultTrafficSizeMiB * trafficMiB}
+	return trafficPolicy{
+		start: boundary, end: boundary, retentionMonths: defaultRetentionMonths, maxBytes: defaultTrafficSizeMiB * trafficMiB,
+		detailDays: defaultDetailDays, detailMaxBytes: defaultDetailSizeMiB * trafficMiB,
+	}
 }
 
 func loadTrafficPolicy(path string, fallback trafficPolicy) (trafficPolicy, error) {
@@ -49,6 +56,8 @@ func loadTrafficPolicy(path string, fallback trafficPolicy) (trafficPolicy, erro
 			End             *string `yaml:"end"`
 			RetentionMonths *int    `yaml:"retention-months"`
 			MaxSizeMiB      *int    `yaml:"max-size-mib"`
+			DetailDays      *int    `yaml:"detail-retention-days"`
+			DetailSizeMiB   *int    `yaml:"detail-max-size-mib"`
 		} `yaml:"traffic"`
 	}
 	if err := yaml.Unmarshal(content, &config); err != nil {
@@ -81,6 +90,18 @@ func loadTrafficPolicy(path string, fallback trafficPolicy) (trafficPolicy, erro
 			return fallback, errors.New("traffic.max-size-mib 必须介于 1 和 256")
 		}
 		policy.maxBytes = *value * trafficMiB
+	}
+	if value := config.Traffic.DetailDays; value != nil {
+		if *value < 0 || *value > 30 {
+			return fallback, errors.New("traffic.detail-retention-days 必须介于 0 和 30")
+		}
+		policy.detailDays = *value
+	}
+	if value := config.Traffic.DetailSizeMiB; value != nil {
+		if *value < 1 || *value > 64 {
+			return fallback, errors.New("traffic.detail-max-size-mib 必须介于 1 和 64")
+		}
+		policy.detailMaxBytes = *value * trafficMiB
 	}
 	return policy, nil
 }

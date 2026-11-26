@@ -30,10 +30,19 @@ type trafficConnection struct {
 	ID       string    `json:"id"`
 	Start    time.Time `json:"start"`
 	Metadata struct {
-		SourceIP    string `json:"sourceIP"`
-		InboundUser string `json:"inboundUser"`
-		Type        string `json:"type"`
+		SourceIP        string          `json:"sourceIP"`
+		InboundUser     string          `json:"inboundUser"`
+		Type            string          `json:"type"`
+		InboundName     string          `json:"inboundName"`
+		Network         string          `json:"network"`
+		Host            string          `json:"host"`
+		SniffHost       string          `json:"sniffHost"`
+		DestinationIP   string          `json:"destinationIP"`
+		DestinationPort json.RawMessage `json:"destinationPort"`
 	} `json:"metadata"`
+	Chains      []string `json:"chains"`
+	Rule        string   `json:"rule"`
+	RulePayload string   `json:"rulePayload"`
 	model.TrafficBytes
 }
 
@@ -56,6 +65,7 @@ type trafficCollector struct {
 	policy       trafficPolicy
 	client       *http.Client
 	state        trafficState
+	details      *trafficDetailStore
 	lastSampleAt time.Time
 	newSince     time.Time
 	sampleFailed bool
@@ -130,6 +140,11 @@ func (s *Service) initTrafficCollector() {
 	s.traffic, err = openTrafficCollector(filepath.Join(s.cfg.DataDir, "traffic-history.json"), localTimeLocation(), policy)
 	if err != nil {
 		s.appendLogf("无法读取流量历史：%v", err)
+		return
+	}
+	s.traffic.details, err = openTrafficDetails(filepath.Join(s.cfg.DataDir, "traffic-connections.jsonl"), policy, time.Now())
+	if err != nil {
+		s.appendLogf("无法读取连接明细：%v", err)
 	}
 }
 
@@ -228,6 +243,10 @@ func (c *trafficCollector) record(at time.Time, connections []trafficConnection)
 			continue
 		}
 		seen[conn.ID] = struct{}{}
+		ip := trafficIP(conn.Metadata.SourceIP)
+		if c.details != nil {
+			c.details.observe(at, conn, ip)
+		}
 		last, known := c.state.Active[conn.ID]
 		// 已经在运行且没有检查点的连接先记录基线，避免重复累计。
 		latest := model.TrafficBytes{
@@ -243,7 +262,7 @@ func (c *trafficCollector) record(at time.Time, connections []trafficConnection)
 		}
 		delta := model.TrafficBytes{Upload: latest.Upload - last.Upload, Download: latest.Download - last.Download}
 		if delta != (model.TrafficBytes{}) {
-			c.addUsage(bucket, conn, delta)
+			c.addUsage(bucket, ip, conn.Metadata.InboundUser, delta)
 		}
 	}
 	for id := range c.state.Active {
@@ -254,14 +273,17 @@ func (c *trafficCollector) record(at time.Time, connections []trafficConnection)
 	}
 }
 
-func (c *trafficCollector) addUsage(day string, conn trafficConnection, delta model.TrafficBytes) {
-	ip := ""
-	if addr, err := netip.ParseAddr(conn.Metadata.SourceIP); err == nil {
+func trafficIP(raw string) string {
+	if addr, err := netip.ParseAddr(raw); err == nil {
 		addr = addr.Unmap()
 		if !addr.IsUnspecified() {
-			ip = addr.String()
+			return addr.String()
 		}
 	}
+	return ""
+}
+
+func (c *trafficCollector) addUsage(day, ip, user string, delta model.TrafficBytes) {
 	if c.state.Days[day] == nil {
 		c.state.Days[day] = make(trafficDay)
 	}
@@ -269,7 +291,6 @@ func (c *trafficCollector) addUsage(day string, conn trafficConnection, delta mo
 	if bucket[ip] == nil {
 		bucket[ip] = make(map[string]model.TrafficBytes)
 	}
-	user := conn.Metadata.InboundUser
 	total := bucket[ip][user]
 	total.Upload += delta.Upload
 	total.Download += delta.Download
