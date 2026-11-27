@@ -19,11 +19,11 @@ import (
 func newDetailTestCollector(t *testing.T, at time.Time, policy trafficPolicy) *trafficCollector {
 	t.Helper()
 	root := t.TempDir()
-	collector, err := openTrafficCollector(filepath.Join(root, "traffic-history.json"), time.FixedZone("UTC+8", 8*3600), policy)
+	collector, err := openTrafficCollector(t, filepath.Join(root, "traffic-history.json"), time.FixedZone("UTC+8", 8*3600), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collector.details, err = openTrafficDetails(filepath.Join(root, "traffic-connections.jsonl"), policy, at)
+	collector.details, err = collector.openDetails()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +56,14 @@ func TestTrafficConnectionsRecordMihomoDestinationAndRoute(t *testing.T) {
 	snapshot[0].Download = 600
 	collector.record(at.Add(time.Second), snapshot[:1])
 	collector.record(at.Add(2*time.Second), nil)
-	if err := collector.saveDetails(at.Add(2 * time.Second)); err != nil {
+	if err := collector.save(at.Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	collector.details, err = openTrafficDetails(collector.details.path, policy, at.Add(time.Minute))
+	collector, err = openTrafficCollector(t, collector.path, collector.location, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.details, err = collector.openDetails()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +94,9 @@ func TestTrafficConnectionsCanBrowseAllRetainedAndUseStableCursor(t *testing.T) 
 		collector.record(at, []trafficConnection{conn})
 	}
 	collector.record(at, []trafficConnection{{ID: "previous-cycle", Start: at.Add(-3 * time.Hour)}})
+	if err := collector.save(at); err != nil {
+		t.Fatal(err)
+	}
 	query := TrafficConnectionQuery{ByUser: true, Kind: "ip", Subject: "192.0.2.8"}
 	first, err := collector.connectionReport(at, query)
 	if err != nil || len(first.Items) != 50 || first.Items[0].ID != "connection-054" || first.NextCursor == "" {
@@ -98,6 +105,9 @@ func TestTrafficConnectionsCanBrowseAllRetainedAndUseStableCursor(t *testing.T) 
 	newer := trafficConnection{ID: "new-connection", Start: at}
 	newer.Metadata.SourceIP = "192.0.2.8"
 	collector.record(at.Add(time.Second), []trafficConnection{newer})
+	if err := collector.save(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	query.Cursor = first.NextCursor
 	second, err := collector.connectionReport(at.Add(time.Second), query)
 	if err != nil || len(second.Items) != 5 || second.Items[0].ID != "connection-004" || second.NextCursor != "" {
@@ -112,80 +122,101 @@ func TestTrafficConnectionsCanBrowseAllRetainedAndUseStableCursor(t *testing.T) 
 	}
 }
 
-func TestTrafficDetailJournalCompactsAndRecoversIncompleteTail(t *testing.T) {
+func TestTrafficDetailMigratesCompleteJournalRows(t *testing.T) {
 	at := time.Date(2026, 11, 27, 3, 0, 0, 0, time.UTC)
 	policy := defaultTrafficPolicy(1)
-	policy.detailDays = 1
-	policy.detailMaxBytes = 750
-	collector := newDetailTestCollector(t, at, policy)
-	store := collector.details
-	for index := 1; index <= 4; index++ {
-		conn := trafficConnection{ID: fmt.Sprintf("record-%d", index), Start: at.Add(-time.Hour)}
-		conn.Metadata.Host = strings.Repeat("x", 155)
-		store.observe(at.Add(time.Duration(index)*time.Minute), conn, "192.0.2.1")
-	}
-	if err := store.flush(at.Add(5 * time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	fixture, err := os.ReadFile(store.path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "traffic-connections.jsonl")
+	record := model.TrafficConnectionDetail{ID: "old", StartedAt: at, LastSeenAt: at, Host: "old.example", TrafficBytes: model.TrafficBytes{Download: 600}}
+	raw, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fixture) > policy.detailMaxBytes || len(store.records) != 2 || store.records["record-4"].ID == "" || store.records["record-3"].ID == "" {
-		t.Fatalf("文件未优先保留最新记录，文件大小 %d，记录数 %d", len(fixture), len(store.records))
-	}
-	if err := appendTrafficJournal(store.path, []byte(`{"id":"unfinished"`)); err != nil {
+	if err := os.WriteFile(path, append(raw, []byte("\n{\"unfinished\":")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := openTrafficDetails(store.path, policy, at.Add(5*time.Minute))
-	if err != nil || len(recovered.records) != 2 {
-		t.Fatalf("重启后没有恢复完整记录：%v", err)
-	}
-	if err := recovered.flush(at.Add(5 * time.Minute)); err != nil {
+	collector, err := openTrafficCollector(t, filepath.Join(dir, "traffic-history.json"), time.UTC, policy)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recovered.flush(at.Add(25 * time.Hour)); err != nil {
+	collector.details, err = collector.openDetails()
+	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(store.path)
-	if err != nil || info.Size() != 0 || len(recovered.records) != 0 {
-		t.Fatalf("没有清理到期明细：%v", err)
+	report, err := collector.connectionReport(at, TrafficConnectionQuery{Period: "all"})
+	if err != nil || len(report.Items) != 1 || report.Items[0].Download != 600 {
+		t.Fatalf("迁移后未保留累计记录：%+v，%v", report, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("应保留旧版文件作为迁移备份：%v", err)
+	}
+	analysis, err := collector.analysis(at, TrafficAnalysisQuery{})
+	if err != nil || analysis.Totals.Download != 0 {
+		t.Fatalf("旧累计值不应伪造分时用量：%+v，%v", analysis, err)
 	}
 }
 
-func TestTrafficDetailsDoNotAffectSummaryWhenDisabledOrOnSaveError(t *testing.T) {
+func TestTrafficHistoryUsesOneSharedSizeBudget(t *testing.T) {
+	at := time.Date(2026, 11, 27, 3, 0, 0, 0, time.UTC)
+	policy := defaultTrafficPolicy(1)
+	policy.maxBytes = 2 * trafficMiB
+	collector := newDetailTestCollector(t, at, policy)
+	collector.record(at.Add(-time.Second), nil)
+	for i := 0; i < 1600; i++ {
+		conn := trafficConnection{ID: fmt.Sprintf("request-%04d", i), Start: at.Add(time.Duration(i) * time.Second), TrafficBytes: model.TrafficBytes{Download: 5}}
+		conn.Metadata.Host = strings.Repeat("x", 430)
+		collector.record(conn.Start, []trafficConnection{conn})
+	}
+	if err := collector.save(at); err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.store.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	policy.maxBytes = trafficMiB
+	collector, err := openTrafficCollector(t, collector.path, collector.location, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.details, err = collector.openDetails()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(filepath.Dir(collector.path), stateDBName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := collector.store.get(stateTraffic); err != nil || !found {
+		t.Fatalf("共享数据库缺少流量汇总：%v", err)
+	}
+	if int(info.Size()) > policy.maxBytes {
+		t.Fatalf("数据库超过共享上限：%d", info.Size())
+	}
+	report, err := collector.connectionReport(at, TrafficConnectionQuery{Period: "all"})
+	if err != nil || len(report.Items) == 0 || report.Items[0].ID != "request-1599" {
+		t.Fatalf("超限后应保留最新记录：%+v，%v", report, err)
+	}
+}
+
+func TestTrafficDetailsDisabledDoesNotDisableSQLiteSummary(t *testing.T) {
 	at := time.Date(2026, 11, 27, 3, 0, 0, 0, time.UTC)
 	policy := defaultTrafficPolicy(1)
 	collector := newDetailTestCollector(t, at, policy)
-	collector.details.path = filepath.Join(t.TempDir(), "missing", "details.jsonl")
+	collector.policy.detailsDisabled = true
+	collector.details = nil
 	collector.record(at.Add(-time.Second), nil)
 	conn := trafficConnection{ID: "detail-id", Start: at, TrafficBytes: model.TrafficBytes{Download: 150}}
 	conn.Metadata.SourceIP = "192.0.2.8"
 	collector.record(at, []trafficConnection{conn})
-	if err := collector.saveDetails(at); err == nil {
-		t.Fatal("明细目录不可写时应报告失败")
-	}
 	if err := collector.save(at); err != nil {
-		t.Fatalf("明细保存失败影响了月度汇总：%v", err)
+		t.Fatalf("关闭明细后应继续保存月度汇总：%v", err)
 	}
 	summary, err := collector.report(at, "", false, false)
 	if err != nil || summary.Totals.Download != 150 {
 		t.Fatalf("原有流量汇总错误：%+v，%v", summary, err)
 	}
-	file := filepath.Join(t.TempDir(), "detail.jsonl")
-	content, err := json.Marshal(collector.details.records[conn.ID])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, append(content, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	policy.detailDays = 0
-	disabled, err := openTrafficDetails(file, policy, at)
-	if err != nil || disabled != nil {
-		t.Fatalf("停用时不应加载明细：%v", err)
-	}
-	if _, err := os.Stat(file); err != nil {
-		t.Fatalf("停用不应移除已有文件：%v", err)
+	details, err := collector.connectionReport(at, TrafficConnectionQuery{})
+	if err != nil || !details.Disabled {
+		t.Fatalf("停用后仍提供连接明细：%v", err)
 	}
 }

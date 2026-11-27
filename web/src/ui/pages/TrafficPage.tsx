@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n/I18nProvider'
 import type { TrafficReport } from '@/types/api'
 import { Panel } from '@/ui/components/Panel'
 import { TrafficConnections } from '@/ui/components/TrafficConnections'
+import { TrafficAnalysis } from '@/ui/components/TrafficAnalysis'
 
 const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
 
@@ -21,6 +22,7 @@ export function Component() {
   const { locale, t } = useI18n()
   const [period, setPeriod] = useState('')
   const [group, setGroup] = useState<'user' | 'ip'>('user')
+  const [subject, setSubject] = useState('')
   const query = useQuery({
     queryKey: ['traffic', period, group],
     queryFn: () => apiGet<TrafficReport>(`/api/traffic?${new URLSearchParams({ period, groupBy: group })}`),
@@ -51,7 +53,10 @@ export function Component() {
           </label>
           <label>
             <span>{t('traffic.group')}</span>
-            <select className="table-input" value={group} onChange={(event) => setGroup(event.target.value === 'ip' ? 'ip' : 'user')}>
+            <select className="table-input" value={group} onChange={(event) => {
+              setGroup(event.target.value === 'ip' ? 'ip' : 'user')
+              setSubject('')
+            }}>
               <option value="user">{t('traffic.byUser')}</option>
               <option value="ip">{t('traffic.byIP')}</option>
             </select>
@@ -104,7 +109,9 @@ export function Component() {
                     {report.items.map((item) => (
                       <tr key={`${item.kind}:${item.name}`}>
                         <td>
-                          <div className="table-primary">{item.name || t('traffic.unknown')}</div>
+                          <a className="traffic-drilldown" href="#traffic-analysis" onClick={() => setSubject(`${item.kind}:${item.name}`)}>
+                            {item.name || t('traffic.unknown')}
+                          </a>
                           {item.kind !== 'unknown' ? <div className="table-secondary">{t(`traffic.${item.kind}`)}</div> : null}
                         </td>
                         <td>{bytes(item.upload)}</td>
@@ -119,6 +126,16 @@ export function Component() {
           </>
         ) : null}
       </Panel>
+      {report && !query.isPlaceholderData ? (
+        <TrafficAnalysis
+          period={report.period.id}
+          group={group}
+          subjects={report.items}
+          selection={subject}
+          onSelect={setSubject}
+          formatBytes={bytes}
+        />
+      ) : null}
       {report && !query.isPlaceholderData ? (
         <TrafficConnections
           key={`${report.period.id}:${group}`}

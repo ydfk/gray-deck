@@ -19,6 +19,8 @@ type SystemStatus struct {
 	GraydeckVersion         string `json:"graydeckVersion"`
 	GraydeckLatestVersion   string `json:"graydeckLatestVersion"`
 	GraydeckIsLatest        bool   `json:"graydeckIsLatest"`
+	GraydeckUpdateAvailable bool   `json:"graydeckUpdateAvailable"`
+	GraydeckVersionVerified bool   `json:"graydeckVersionVerified"`
 	GraydeckUpdateSupported bool   `json:"graydeckUpdateSupported"`
 	DeploymentMode          string `json:"deploymentMode"`
 	RuntimeStatus           string `json:"runtimeStatus"`

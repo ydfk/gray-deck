@@ -21,6 +21,7 @@ func TestCreateSubscriptionDoesNotSyncRemote(t *testing.T) {
 		},
 	}
 
+	service.store = testStateStore(t, service.cfg.DataDir)
 	subscription, err := service.CreateSubscription(context.Background(), "测试配置", "http://127.0.0.1:1/not-found", "30m")
 	if err != nil {
 		t.Fatalf("新增配置不应触发远程同步：%v", err)
@@ -52,6 +53,7 @@ func TestUpdateSubscriptionDoesNotSyncRemote(t *testing.T) {
 		},
 	}
 
+	service.store = testStateStore(t, service.cfg.DataDir)
 	subscription, err := service.UpdateSubscription(context.Background(), "current", "新配置", "http://127.0.0.1:1/not-found", "30m")
 	if err != nil {
 		t.Fatalf("保存配置不应触发远程同步：%v", err)
@@ -171,6 +173,7 @@ func TestUpdateSubscriptionStoresAutomaticSyncState(t *testing.T) {
 		}},
 	}
 
+	service.store = testStateStore(t, service.cfg.DataDir)
 	disabled, err := service.UpdateSubscription(context.Background(), "current", "配置", "https://example.com/config.yaml", "disabled")
 	if err != nil {
 		t.Fatalf("关闭自动同步失败：%v", err)
@@ -214,6 +217,7 @@ func TestTickAutoSyncFetchesDueSubscriptionAndRecordsAttempt(t *testing.T) {
 		}},
 	}
 
+	service.store = testStateStore(t, service.cfg.DataDir)
 	if err := os.MkdirAll(service.subscriptionDir(), 0o755); err != nil {
 		t.Fatalf("创建订阅目录失败：%v", err)
 	}

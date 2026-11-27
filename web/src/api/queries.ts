@@ -13,6 +13,7 @@ export function useSystemStatus() {
   return useQuery({
     queryKey: ['system-status'],
     queryFn: () => apiGet<SystemStatus>('/api/system/status'),
+    refetchInterval: 30_000,
   })
 }
 

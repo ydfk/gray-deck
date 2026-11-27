@@ -17,7 +17,7 @@ func TestTrafficCustomWindowUsesBothLocalTimes(t *testing.T) {
 	zone := time.FixedZone("UTC+8", 8*60*60)
 	policy := defaultTrafficPolicy(1)
 	policy.start, policy.end = trafficClock{15, 8, 30}, trafficClock{10, 18, 0}
-	collector, err := openTrafficCollector(filepath.Join(t.TempDir(), "traffic-history.json"), zone, policy)
+	collector, err := openTrafficCollector(t, filepath.Join(t.TempDir(), "traffic-history.json"), zone, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestTrafficRetentionPrunesExpiredLegacyDaysWithoutNewSamples(t *testing.T) 
 	}
 	policy := defaultTrafficPolicy(1)
 	policy.retentionMonths = 2
-	collector, err := openTrafficCollector(path, time.UTC, policy)
+	collector, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestTrafficRetentionPrunesExpiredLegacyDaysWithoutNewSamples(t *testing.T) 
 	if err := collector.save(at); err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := openTrafficCollector(path, time.UTC, policy)
+	reloaded, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,8 @@ func TestTrafficRetentionPrunesExpiredLegacyDaysWithoutNewSamples(t *testing.T) 
 func TestTrafficFileCapEvictsOldestBucketsAndMarksPartialPeriod(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic-history.json")
 	policy := defaultTrafficPolicy(1)
-	policy.maxBytes = 800
-	collector, err := openTrafficCollector(path, time.UTC, policy)
+	policy.maxBytes = 1000
+	collector, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,17 +136,17 @@ func TestTrafficFileCapEvictsOldestBucketsAndMarksPartialPeriod(t *testing.T) {
 	if err := collector.save(at); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	content, found, err := collector.store.get(stateTraffic)
+	if err != nil || !found {
+		t.Fatalf("SQLite 缺少流量汇总：%v", err)
 	}
 	if len(content) > policy.maxBytes {
 		t.Fatalf("文件写入突破上限：%d", len(content))
 	}
-	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("保存后应清理临时文件：%v", err)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("保存后不应新建旧版汇总文件：%v", err)
 	}
-	reloaded, err := openTrafficCollector(path, time.UTC, policy)
+	reloaded, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestTrafficOversizedBaselinesCannotRecountOldConnections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic-history.json")
 	policy := defaultTrafficPolicy(1)
 	policy.maxBytes = 1000
-	collector, err := openTrafficCollector(path, time.UTC, policy)
+	collector, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,16 +176,16 @@ func TestTrafficOversizedBaselinesCannotRecountOldConnections(t *testing.T) {
 	if err := collector.save(at); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	content, found, err := collector.store.get(stateTraffic)
+	if err != nil || !found {
+		t.Fatalf("SQLite 缺少流量汇总：%v", err)
 	}
 	var persisted trafficState
 	if err := json.Unmarshal(content, &persisted); err != nil || len(persisted.Active) != 0 ||
 		persisted.SampledAt == nil || !persisted.SampledAt.Equal(at) {
 		t.Fatalf("大流量连接快照未降级为时间检查点：%+v，%v", persisted, err)
 	}
-	reloaded, err := openTrafficCollector(path, time.UTC, policy)
+	reloaded, err := openTrafficCollector(t, path, time.UTC, policy)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -92,6 +92,15 @@ export function OverviewPage() {
     onError: (error) => setActionError(error instanceof Error ? error.message : t("status.error")),
   });
 
+  const checkGraydeckMutation = useMutation({
+    mutationFn: () => apiPost<SystemStatus>("/api/system/graydeck/check"),
+    onSuccess: (status) => {
+      setActionError("");
+      queryClient.setQueryData(["system-status"], status);
+    },
+    onError: (error) => setActionError(error instanceof Error ? error.message : t("status.error")),
+  });
+
   const updateCoreMutation = useMutation({
     mutationFn: (payload?: { source: "auto" | "url"; url?: string }) => apiPost<SystemStatus>("/api/system/core/update", payload),
     onSuccess: async () => {
@@ -195,9 +204,7 @@ export function OverviewPage() {
   const coreActionLabel = systemStatus?.coreExecutableReady ? t("core.updateNow") : `${t("common.install")}${t("update.coreTitle")}`;
   const showCoreActionButton = !systemStatus?.coreExecutableReady || !systemStatus.coreIsLatest;
   const showGraydeckActionButton = Boolean(
-    systemStatus?.graydeckUpdateSupported &&
-      systemStatus.graydeckLatestVersion &&
-      !systemStatus.graydeckIsLatest,
+    systemStatus?.graydeckUpdateSupported && systemStatus.graydeckUpdateAvailable,
   );
 
   function formatVersion(value: string, fallback: string) {
@@ -256,7 +263,7 @@ export function OverviewPage() {
   }
 
   function getGraydeckVersionBadgeClass() {
-    if (!systemStatus?.graydeckLatestVersion) {
+    if (!systemStatus?.graydeckUpdateAvailable && !systemStatus?.graydeckIsLatest) {
       return "badge";
     }
 
@@ -288,13 +295,16 @@ export function OverviewPage() {
                       <span className="summary-label">{t("graydeck.latestVersion")}</span>
                       <span className="summary-value-inline">{formatVersion(systemStatus.graydeckLatestVersion, t("core.unknown"))}</span>
                       <span className={getGraydeckVersionBadgeClass()}>
-                        {systemStatus.graydeckLatestVersion
-                          ? systemStatus.graydeckIsLatest
+                        {systemStatus.graydeckUpdateAvailable
+                          ? t("graydeck.hasUpdate")
+                          : systemStatus.graydeckIsLatest
                             ? t("graydeck.isLatest")
-                            : t("graydeck.hasUpdate")
-                          : t("core.unknown")}
+                            : t("graydeck.versionUnverified")}
                       </span>
-                      {systemStatus.deploymentMode === "docker" && systemStatus.graydeckLatestVersion && !systemStatus.graydeckIsLatest ? (
+                      <button className="secondary-pill table-action-button" disabled={checkGraydeckMutation.isPending} onClick={() => checkGraydeckMutation.mutate()} type="button">
+                        {checkGraydeckMutation.isPending ? t("common.loading") : t("graydeck.check")}
+                      </button>
+                      {systemStatus.deploymentMode === "docker" && systemStatus.graydeckUpdateAvailable ? (
                         <span className="table-secondary">{t("graydeck.dockerUpdateHint")}</span>
                       ) : null}
                       {showGraydeckActionButton ? (

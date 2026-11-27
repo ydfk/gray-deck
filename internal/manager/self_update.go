@@ -28,10 +28,13 @@ func (s *Service) UpdateGraydeck(ctx context.Context) (model.SystemStatus, error
 	}
 
 	s.appendLog("开始更新 Graydeck")
-	release, err := s.fetchLatestRelease(ctx, buildinfo.RepositoryOwner, buildinfo.RepositoryName)
+	release, verified, err := s.fetchLatestGraydeckRelease(ctx)
 	if err != nil {
 		s.appendLogf("更新 Graydeck 失败：%v", err)
 		return model.SystemStatus{}, err
+	}
+	if compareGraydeckVersions(release.TagName, buildinfo.Version) <= 0 {
+		return model.SystemStatus{}, errors.New("发布源没有提供更新的 Graydeck 版本")
 	}
 
 	asset, err := s.selectGraydeckAsset(release)
@@ -61,6 +64,7 @@ func (s *Service) UpdateGraydeck(ctx context.Context) (model.SystemStatus, error
 	s.mu.Lock()
 	s.status.GraydeckVersion = release.TagName
 	s.status.GraydeckLatestVersion = release.TagName
+	s.status.GraydeckVersionVerified = verified
 	s.syncInstallStateLocked()
 	s.mu.Unlock()
 

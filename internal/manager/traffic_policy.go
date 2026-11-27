@@ -14,9 +14,7 @@ import (
 const (
 	trafficKeyLayout       = "2006-01-02T15:04"
 	defaultRetentionMonths = 12
-	defaultTrafficSizeMiB  = 32
-	defaultDetailDays      = 7
-	defaultDetailSizeMiB   = 16
+	defaultTrafficSizeMiB  = 100
 	trafficMiB             = 1024 * 1024
 )
 
@@ -30,15 +28,22 @@ type trafficPolicy struct {
 	start, end      trafficClock
 	retentionMonths int
 	maxBytes        int
-	detailDays      int
-	detailMaxBytes  int
+	detailsDisabled bool
+}
+
+func (p trafficPolicy) summaryBudget() int {
+	return p.maxBytes - min(trafficDBReserve, p.maxBytes/4)
+}
+
+func (p trafficPolicy) logLimit() int {
+	logByteBudget := p.maxBytes / 8
+	return min(maxLogEntries, max(1, logByteBudget/(maxLogRunes*4)))
 }
 
 func defaultTrafficPolicy(day int) trafficPolicy {
 	boundary := trafficClock{day: day}
 	return trafficPolicy{
 		start: boundary, end: boundary, retentionMonths: defaultRetentionMonths, maxBytes: defaultTrafficSizeMiB * trafficMiB,
-		detailDays: defaultDetailDays, detailMaxBytes: defaultDetailSizeMiB * trafficMiB,
 	}
 }
 
@@ -57,7 +62,6 @@ func loadTrafficPolicy(path string, fallback trafficPolicy) (trafficPolicy, erro
 			RetentionMonths *int    `yaml:"retention-months"`
 			MaxSizeMiB      *int    `yaml:"max-size-mib"`
 			DetailDays      *int    `yaml:"detail-retention-days"`
-			DetailSizeMiB   *int    `yaml:"detail-max-size-mib"`
 		} `yaml:"traffic"`
 	}
 	if err := yaml.Unmarshal(content, &config); err != nil {
@@ -95,13 +99,7 @@ func loadTrafficPolicy(path string, fallback trafficPolicy) (trafficPolicy, erro
 		if *value < 0 || *value > 30 {
 			return fallback, errors.New("traffic.detail-retention-days 必须介于 0 和 30")
 		}
-		policy.detailDays = *value
-	}
-	if value := config.Traffic.DetailSizeMiB; value != nil {
-		if *value < 1 || *value > 64 {
-			return fallback, errors.New("traffic.detail-max-size-mib 必须介于 1 和 64")
-		}
-		policy.detailMaxBytes = *value * trafficMiB
+		policy.detailsDisabled = *value == 0
 	}
 	return policy, nil
 }

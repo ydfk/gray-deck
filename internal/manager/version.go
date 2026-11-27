@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,26 +11,49 @@ import (
 	"time"
 )
 
+func (s *Service) cacheLatestVersionLocked(key, before, version string) {
+	if s.store != nil && version != "" && version != before {
+		if err := s.store.put(key, []byte(version)); err != nil {
+			s.appendLogLocked(fmt.Sprintf("保存最新版本记录失败：%v", err))
+		}
+	}
+}
+
 var zashboardAssetVersionPattern = regexp.MustCompile("=L\\((?:\"|'|`)(v?\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?)(?:\"|'|`)\\)")
 var semanticVersionPattern = regexp.MustCompile(`v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`)
 
 func (s *Service) detectInstalledZashboardVersion() string {
+	if !fileExists(filepath.Join(s.zashboardRoot(), "index.html")) {
+		return ""
+	}
 	if version := detectZashboardVersionFromAssets(s.zashboardRoot()); version != "" {
 		return version
 	}
-
-	candidates := []string{
-		filepath.Join(s.zashboardRoot(), "version.txt"),
-		filepath.Join(s.zashboardDir(), "version.txt"),
+	if version := s.cachedArtifactVersion(statePanelVersion, filepath.Join(s.zashboardDir(), "version.txt")); version != "" {
+		return version
 	}
+	return readTrimmedFile(filepath.Join(s.zashboardRoot(), "version.txt"))
+}
 
-	for _, path := range candidates {
-		if version := readTrimmedFile(path); version != "" {
-			return version
+func (s *Service) cachedArtifactVersion(key, legacyPath string) string {
+	if s.store != nil {
+		data, found, err := s.store.get(key)
+		if err != nil {
+			s.appendLogf("读取版本记录失败：%v", err)
+		} else if found {
+			return string(data)
 		}
 	}
-
-	return ""
+	if legacyPath == "" {
+		return ""
+	}
+	version := readTrimmedFile(legacyPath)
+	if version != "" && s.store != nil {
+		if err := s.store.put(key, []byte(version)); err != nil {
+			s.appendLogf("迁移版本记录失败：%v", err)
+		}
+	}
+	return version
 }
 
 func detectZashboardVersionFromAssets(root string) string {
@@ -90,8 +114,8 @@ func (s *Service) detectInstalledCoreVersion() string {
 		return version
 	}
 
-	if version := readTrimmedFile(filepath.Join(s.coreDir(), "version.txt")); version != "" && fileExists(s.coreExecutablePath()) {
-		return version
+	if fileExists(s.coreExecutablePath()) {
+		return s.cachedArtifactVersion(stateCoreVersion, filepath.Join(s.coreDir(), "version.txt"))
 	}
 
 	return ""

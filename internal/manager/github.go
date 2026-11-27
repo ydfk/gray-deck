@@ -16,7 +16,6 @@ import (
 	"runtime"
 	"strings"
 
-	"mihomo-manager/internal/buildinfo"
 	"mihomo-manager/internal/model"
 )
 
@@ -43,27 +42,12 @@ func (s *Service) refreshCoreMetadata(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
+	s.cacheLatestVersionLocked(stateCoreLatest, s.status.CoreLatestVersion, release.TagName)
 	s.status.CoreLatestVersion = release.TagName
 	s.syncInstallStateLocked()
 	s.mu.Unlock()
 
 	s.appendLogf("mihomo 核心最新版本：%s", release.TagName)
-	return nil
-}
-
-func (s *Service) refreshGraydeckMetadata(ctx context.Context) error {
-	s.appendLog("开始检查 Graydeck 最新版本")
-	release, err := s.fetchLatestRelease(ctx, buildinfo.RepositoryOwner, buildinfo.RepositoryName)
-	if err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.status.GraydeckLatestVersion = release.TagName
-	s.syncInstallStateLocked()
-	s.mu.Unlock()
-
-	s.appendLogf("Graydeck 最新版本：%s", release.TagName)
 	return nil
 }
 
@@ -204,6 +188,9 @@ func (s *Service) installCorePackage(packagePath, packageName, fallbackVersion s
 	if version == "" {
 		version = "unknown"
 	}
+	if err := s.store.put(stateCoreVersion, []byte(version)); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	s.status.CoreVersion = version
@@ -212,7 +199,7 @@ func (s *Service) installCorePackage(packagePath, packageName, fallbackVersion s
 	s.mu.Unlock()
 
 	s.appendLogf("mihomo 核心安装完成，当前版本：%s", version)
-	return os.WriteFile(filepath.Join(s.coreDir(), "version.txt"), []byte(version+"\n"), 0o644)
+	return nil
 }
 
 func replaceExecutable(sourcePath, targetPath string) error {
@@ -241,6 +228,7 @@ func (s *Service) refreshZashboardMetadata(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
+	s.cacheLatestVersionLocked(statePanelLatest, s.status.ZashboardLatestVersion, release.TagName)
 	s.status.ZashboardLatestVersion = release.TagName
 	s.status.ZashboardError = ""
 	s.syncInstallStateLocked()
@@ -340,11 +328,16 @@ func (s *Service) installZashboardArchive(sourcePath, sourceName, fallbackVersio
 	}
 
 	version := strings.TrimSpace(fallbackVersion)
-	if detectedVersion := s.detectInstalledZashboardVersion(); detectedVersion != "" {
+	if detectedVersion := detectZashboardVersionFromAssets(s.zashboardRoot()); detectedVersion != "" {
+		version = detectedVersion
+	} else if detectedVersion := readTrimmedFile(filepath.Join(s.zashboardRoot(), "version.txt")); detectedVersion != "" {
 		version = detectedVersion
 	}
 	if version == "" {
 		version = "unknown"
+	}
+	if err := s.store.put(statePanelVersion, []byte(version)); err != nil {
+		return err
 	}
 
 	s.mu.Lock()
@@ -355,7 +348,7 @@ func (s *Service) installZashboardArchive(sourcePath, sourceName, fallbackVersio
 	s.mu.Unlock()
 
 	s.appendLogf("Zashboard 安装完成，当前版本：%s", version)
-	return os.WriteFile(filepath.Join(s.zashboardDir(), "version.txt"), []byte(version+"\n"), 0o644)
+	return nil
 }
 
 func (s *Service) fetchLatestRelease(ctx context.Context, owner, repo string) (releaseInfo, error) {

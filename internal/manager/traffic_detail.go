@@ -2,8 +2,8 @@ package manager
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -55,106 +55,124 @@ func (s *Service) TrafficConnections(query TrafficConnectionQuery) (model.Traffi
 }
 
 func (c *trafficCollector) connectionReport(now time.Time, query TrafficConnectionQuery) (model.TrafficConnectionReport, error) {
-	if len(query.Subject) > 512 || len(query.Search) > 512 {
-		return model.TrafficConnectionReport{}, ErrTrafficDetailQuery
-	}
-	switch query.Kind {
-	case "", "unknown":
-		if query.Subject != "" {
-			return model.TrafficConnectionReport{}, ErrTrafficDetailQuery
-		}
-	case "ip", "user":
-		if query.Subject == "" || (query.Kind == "user" && !query.ByUser) {
-			return model.TrafficConnectionReport{}, ErrTrafficDetailQuery
-		}
-	default:
-		return model.TrafficConnectionReport{}, ErrTrafficDetailQuery
-	}
 	cursor, err := parseTrafficDetailCursor(query.Cursor)
 	if err != nil {
 		return model.TrafficConnectionReport{}, err
 	}
 
+	filters, args, err := connectionFilters(query)
+	if err != nil {
+		return model.TrafficConnectionReport{}, err
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	report := model.TrafficConnectionReport{
-		RetentionDays: c.policy.detailDays, MaxSizeMiB: c.policy.detailMaxBytes / trafficMiB,
-		MaxRecords: maxTrafficDetails, Items: make([]model.TrafficConnectionDetail, 0),
+		Disabled: c.policy.detailsDisabled, MaxSizeMiB: c.policy.maxBytes / trafficMiB,
+		Items: make([]model.TrafficConnectionDetail, 0),
 	}
-	if c.policy.detailDays == 0 {
+	if report.Disabled {
 		return report, nil
 	}
 	if c.details == nil {
 		return model.TrafficConnectionReport{}, ErrTrafficUnavailable
 	}
 	report.StorageError = c.details.storageError
-	if query.Period == "all" {
-		report.Items, report.NextCursor = c.findConnections(now, trafficWindow{}, query, cursor)
-		return report, nil
-	}
-	windows := c.trafficWindows(c.policy.currentMonth(now.In(c.location)))
-	for _, window := range windows {
-		if query.Period == "" || window.start.Format(time.DateOnly) == query.Period {
-			report.Items, report.NextCursor = c.findConnections(now, window, query, cursor)
-			return report, nil
+	if query.Period != "all" {
+		window, found := c.connectionWindow(now, query.Period)
+		if !found {
+			return model.TrafficConnectionReport{}, ErrTrafficPeriod
 		}
+		filters = append(filters, "c.started>=?", "c.started<?")
+		args = append(args, window.start.UnixNano(), window.end.UnixNano())
 	}
-	return model.TrafficConnectionReport{}, ErrTrafficPeriod
+	if !cursor.at.IsZero() {
+		filters = append(filters, "(c.started,c.id)<(?,?)")
+		args = append(args, cursor.at.UnixNano(), cursor.id)
+	}
+	report.Items, report.NextCursor, err = c.findConnections(filters, args)
+	return report, err
 }
 
-func (c *trafficCollector) findConnections(now time.Time, window trafficWindow, query TrafficConnectionQuery, cursor trafficDetailCursor) ([]model.TrafficConnectionDetail, string) {
-	matches := make([]model.TrafficConnectionDetail, 0)
-	cutoff := c.details.cutoff(now)
-	term := strings.ToLower(strings.TrimSpace(query.Search))
-	subject := trafficSubject{kind: query.Kind, name: query.Subject}
-	for _, item := range c.details.records {
-		at := item.StartedAt
-		if (!window.end.IsZero() && (at.Before(window.start) || !at.Before(window.end))) || item.LastSeenAt.Before(cutoff) {
-			continue
+func (c *trafficCollector) connectionWindow(now time.Time, period string) (trafficWindow, bool) {
+	windows := c.trafficWindows(c.policy.currentMonth(now.In(c.location)))
+	for _, window := range windows {
+		if period == "" || window.start.Format(time.DateOnly) == period {
+			return window, true
 		}
-		if !cursor.at.IsZero() && (at.After(cursor.at) || (at.Equal(cursor.at) && item.ID >= cursor.id)) {
-			continue
+	}
+	return trafficWindow{}, false
+}
+
+func connectionFilters(query TrafficConnectionQuery) ([]string, []any, error) {
+	if len(query.Subject) > 512 || len(query.Search) > 512 {
+		return nil, nil, ErrTrafficDetailQuery
+	}
+	var filters []string
+	var args []any
+	switch query.Kind {
+	case "", "unknown":
+		if query.Subject != "" {
+			return nil, nil, ErrTrafficDetailQuery
 		}
-		if subject.kind != "" && subjectForTraffic(item.SourceIP, item.InboundUser, query.ByUser) != subject {
-			continue
+		if query.Kind == "unknown" {
+			filters = append(filters, "c.source_ip=''")
 		}
-		if term != "" && !trafficDetailMatches(item, term) {
-			continue
+	case "ip", "user":
+		if query.Subject == "" || (query.Kind == "user" && !query.ByUser) {
+			return nil, nil, ErrTrafficDetailQuery
 		}
+		column := "source_ip"
+		if query.Kind == "user" {
+			column = "inbound_user"
+		}
+		filters = append(filters, "c."+column+"=?")
+		args = append(args, query.Subject)
+	default:
+		return nil, nil, ErrTrafficDetailQuery
+	}
+	if query.ByUser && (query.Kind == "ip" || query.Kind == "unknown") {
+		filters = append(filters, "c.inbound_user=''")
+	}
+	if term := strings.ToLower(strings.TrimSpace(query.Search)); term != "" {
+		filters = append(filters, "instr(c.search_text,?)>0")
+		args = append(args, term)
+	}
+	return filters, args, nil
+}
+
+func (c *trafficCollector) findConnections(filters []string, args []any) ([]model.TrafficConnectionDetail, string, error) {
+	sql := "SELECT c.started,c.detail FROM connections c"
+	if len(filters) != 0 {
+		sql += " WHERE " + strings.Join(filters, " AND ")
+	}
+	rows, err := c.details.db.Query(sql+" ORDER BY c.started DESC,c.id DESC LIMIT ?", append(args, trafficDetailPageSize+1)...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	matches := make([]model.TrafficConnectionDetail, 0, trafficDetailPageSize+1)
+	for rows.Next() {
+		var started int64
+		var payload []byte
+		if err := rows.Scan(&started, &payload); err != nil {
+			return nil, "", err
+		}
+		var item model.TrafficConnectionDetail
+		if err := json.Unmarshal(payload, &item); err != nil {
+			return nil, "", err
+		}
+		item.StartedAt = time.Unix(0, started).In(c.location)
+		item.LastSeenAt = item.LastSeenAt.In(c.location)
 		matches = append(matches, item)
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		a, b := matches[i], matches[j]
-		if a.StartedAt.Equal(b.StartedAt) {
-			return a.ID > b.ID
-		}
-		return a.StartedAt.After(b.StartedAt)
-	})
-
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
 	next := ""
 	if len(matches) > trafficDetailPageSize {
 		matches = matches[:trafficDetailPageSize]
 		last := matches[len(matches)-1]
 		next = base64.RawURLEncoding.EncodeToString([]byte(last.StartedAt.UTC().Format(time.RFC3339Nano) + "\n" + last.ID))
 	}
-	for index := range matches {
-		item := &matches[index]
-		item.StartedAt = item.StartedAt.In(c.location)
-		item.LastSeenAt = item.LastSeenAt.In(c.location)
-	}
-	return matches, next
-}
-
-func trafficDetailMatches(item model.TrafficConnectionDetail, term string) bool {
-	for _, field := range []string{item.Host, item.SniffHost, item.DestinationIP, item.DestinationPort, item.SourceIP, item.InboundUser, item.Rule, item.RulePayload, item.Network, item.InboundType, item.InboundName} {
-		if strings.Contains(strings.ToLower(field), term) {
-			return true
-		}
-	}
-	for _, name := range item.Route {
-		if strings.Contains(strings.ToLower(name), term) {
-			return true
-		}
-	}
-	return false
+	return matches, next, nil
 }

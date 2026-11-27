@@ -34,7 +34,7 @@ func TestReplaceExecutableReplacesExistingFile(t *testing.T) {
 
 func TestZashboardInstallationPersistsInDataDir(t *testing.T) {
 	dataDir := t.TempDir()
-	service := &Service{cfg: Config{DataDir: dataDir}}
+	service := &Service{cfg: Config{DataDir: dataDir}, store: testStateStore(t, dataDir)}
 	if err := os.MkdirAll(service.zashboardDir(), 0o755); err != nil {
 		t.Fatalf("创建 Zashboard 目录失败：%v", err)
 	}
@@ -66,7 +66,7 @@ func TestZashboardInstallationPersistsInDataDir(t *testing.T) {
 		t.Fatalf("安装 Zashboard 失败：%v", err)
 	}
 
-	reloaded := &Service{cfg: Config{DataDir: dataDir}}
+	reloaded := &Service{cfg: Config{DataDir: dataDir}, store: testStateStore(t, dataDir)}
 	reloaded.loadInstalledVersions()
 	status := reloaded.Status()
 	if !status.ZashboardReady || status.ZashboardVersion != "v9.9.9" {

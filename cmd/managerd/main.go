@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"mihomo-manager/internal/app"
 )
@@ -15,7 +18,9 @@ func main() {
 		log.Fatalf("create server: %v", err)
 	}
 
-	if err := server.ListenAndServe(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := server.ListenAndServe(ctx); err != nil {
 		log.Printf("server stopped: %v", err)
 		os.Exit(1)
 	}

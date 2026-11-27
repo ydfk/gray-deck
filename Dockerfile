@@ -27,6 +27,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOAMD64=v1 go build -tri
 FROM alpine:3.21 AS runtime
 WORKDIR /opt/graydeck
 
+ARG VERSION=0.0.0-dev
+LABEL org.opencontainers.image.source="https://github.com/ydfk/gray-deck" \
+      org.opencontainers.image.version="${VERSION}"
+
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=server-builder /out/managerd /usr/local/bin/managerd
@@ -44,4 +48,5 @@ EXPOSE 17893/tcp
 EXPOSE 17893/udp
 VOLUME ["/data", "/config"]
 
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/managerd"]

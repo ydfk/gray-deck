@@ -2,6 +2,8 @@ export type SystemStatus = {
   graydeckVersion: string;
   graydeckLatestVersion: string;
   graydeckIsLatest: boolean;
+  graydeckUpdateAvailable: boolean;
+  graydeckVersionVerified: boolean;
   graydeckUpdateSupported: boolean;
   deploymentMode: "docker" | "standalone";
   runtimeStatus: string;
@@ -118,10 +120,22 @@ export type TrafficConnection = TrafficBytes & {
 };
 
 export type TrafficConnectionReport = {
-  retentionDays: number;
+  disabled: boolean;
   maxSizeMiB: number;
-  maxRecords: number;
   storageError: boolean;
   nextCursor?: string;
   items: TrafficConnection[];
+};
+
+export type TrafficAnalysisRow = TrafficBytes & {
+  key: string;
+  label: string;
+};
+
+export type TrafficAnalysisReport = {
+  totals: TrafficBytes;
+  timeline: TrafficAnalysisRow[];
+  protocols: TrafficAnalysisRow[];
+  targets: TrafficAnalysisRow[];
+  accesses: (TrafficBytes & { connection: TrafficConnection; first: string; last: string })[];
 };

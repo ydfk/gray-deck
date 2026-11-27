@@ -6,6 +6,7 @@ auth:
   username: admin
   password: admin123
 update:
+  # 核心和面板资源优先使用镜像。Graydeck 版本检查优先使用 GitHub 官方接口。
   prefer-proxy: true
   proxy-url: https://ghfast.top/
 zashboard:
@@ -15,6 +16,7 @@ traffic:
   # start: "1 00:00"
   # end: "1 00:00"
   retention-months: 12
-  max-size-mib: 32
-  detail-retention-days: 7
-  detail-max-size-mib: 16
+  # 流量汇总和连接明细共用数据目录下的 graydeck.sqlite。
+  max-size-mib: 100
+  # 设置为 0 可停用连接明细。月度汇总仍会采集。
+  # detail-retention-days: 0

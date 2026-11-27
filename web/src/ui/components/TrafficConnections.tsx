@@ -82,7 +82,7 @@ export function TrafficConnections({ period, group, subjects, formatBytes }: Pro
     refetchOnWindowFocus: !cursor,
   })
   const report = query.data
-  const disabled = report?.retentionDays === 0
+  const disabled = report?.disabled
 
   return (
     <Panel title={t('traffic.connections')} description={t('traffic.connectionDescription')}>
@@ -131,7 +131,7 @@ export function TrafficConnections({ period, group, subjects, formatBytes }: Pro
       {query.isPending ? <p role="status">{t('common.loading')}</p> : null}
       {report && !disabled ? (
         <>
-          <p className="body-copy">{t('traffic.connectionRetention', { days: report.retentionDays, size: report.maxSizeMiB, count: report.maxRecords })}</p>
+          <p className="body-copy">{t('traffic.connectionRetention', { size: report.maxSizeMiB })}</p>
           {report.storageError ? <p className="status-notice status-notice-error" role="alert">{t('traffic.connectionSaveFailed')}</p> : null}
           {report.items.length === 0 ? (
             <p className="body-copy">{t('traffic.connectionEmpty')}</p>

@@ -529,6 +529,80 @@ select.table-input {
   min-width: 0;
 }
 
+.traffic-analysis {
+  min-width: 0;
+  scroll-margin-top: 16px;
+}
+
+.traffic-drilldown {
+  padding: 0;
+  color: var(--color-black);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  font-weight: 550;
+  text-align: left;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.traffic-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 225px), 1fr));
+  gap: 12px;
+}
+
+.traffic-analysis-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.traffic-analysis-table {
+  min-width: 700px;
+}
+
+.traffic-analysis-table td {
+  overflow-wrap: anywhere;
+}
+
+.traffic-ranking {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.traffic-ranking h3 {
+  margin: 0 0 8px;
+}
+
+.traffic-ranking ul {
+  display: grid;
+  gap: 10px;
+  max-height: 22rem;
+  overflow: auto;
+  list-style: none;
+  padding: 4px;
+  margin: 0;
+}
+
+.traffic-ranking li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  overflow-wrap: anywhere;
+}
+
+.traffic-ranking progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 6px;
+  accent-color: var(--badge-blue-text);
+}
+
 .traffic-connection-filters {
   align-items: flex-end;
 }

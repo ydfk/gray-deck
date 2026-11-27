@@ -3,7 +3,6 @@ package manager
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"sort"
 	"time"
 )
@@ -12,12 +11,8 @@ func (s *Service) saveTraffic() {
 	if s.traffic == nil {
 		return
 	}
-	now := time.Now()
-	if err := s.traffic.save(now); err != nil {
+	if err := s.traffic.save(time.Now()); err != nil {
 		s.appendLogf("保存流量历史失败：%v", err)
-	}
-	if err := s.traffic.saveDetails(now); err != nil {
-		s.appendLogf("保存连接明细失败：%v", err)
 	}
 }
 
@@ -27,11 +22,11 @@ func (c *trafficCollector) save(at time.Time) error {
 	// 即使没有新流量，也按保留期限清理历史。
 	c.pruneExpired(at.In(c.location))
 	if !c.dirty {
-		return nil
+		return c.saveDetails(at)
 	}
-	snapshot, payload, err := c.compactSnapshot(at)
+	snapshot, payload, err := c.compactSnapshot(at, c.policy.summaryBudget())
 	if err == nil {
-		err = writeTrafficState(c.path, payload)
+		err = c.store.put(stateTraffic, payload)
 	}
 	c.storageError = err != nil
 	if err == nil {
@@ -39,6 +34,7 @@ func (c *trafficCollector) save(at time.Time) error {
 		c.state.PrunedThrough = snapshot.PrunedThrough
 		c.state.SampledAt = snapshot.SampledAt
 		c.dirty = false
+		return c.saveDetails(at)
 	}
 	return err
 }
@@ -55,7 +51,7 @@ func (c *trafficCollector) pruneExpired(now time.Time) {
 	}
 }
 
-func (c *trafficCollector) compactSnapshot(at time.Time) (trafficState, []byte, error) {
+func (c *trafficCollector) compactSnapshot(at time.Time, budget int) (trafficState, []byte, error) {
 	snapshot := c.state
 	if !c.lastSampleAt.IsZero() {
 		checkpoint := c.lastSampleAt.UTC()
@@ -65,7 +61,7 @@ func (c *trafficCollector) compactSnapshot(at time.Time) (trafficState, []byte, 
 	if err != nil {
 		return snapshot, nil, err
 	}
-	if len(baselines) > c.policy.maxBytes/4 {
+	if len(baselines) > budget/4 {
 		// 高并发时限制磁盘上的连接基线，重启后从采样时间重新建立缺失的基线。
 		snapshot.Active = nil
 		if snapshot.SampledAt == nil {
@@ -74,7 +70,7 @@ func (c *trafficCollector) compactSnapshot(at time.Time) (trafficState, []byte, 
 		}
 	}
 	payload, err := json.Marshal(snapshot)
-	if err != nil || len(payload) <= c.policy.maxBytes {
+	if err != nil || len(payload) <= budget {
 		return snapshot, payload, err
 	}
 
@@ -98,35 +94,13 @@ func (c *trafficCollector) compactSnapshot(at time.Time) (trafficState, []byte, 
 		delete(snapshot.Days, key)
 		snapshot.PrunedThrough = max(snapshot.PrunedThrough, key)
 		remaining -= len(bucket) + len(key) + 4
-		if remaining <= c.policy.maxBytes {
+		if remaining <= budget {
 			break
 		}
 	}
 	payload, err = json.Marshal(snapshot)
-	if err == nil && len(payload) > c.policy.maxBytes {
+	if err == nil && len(payload) > budget {
 		err = errors.New("流量历史元数据超过文件大小上限")
 	}
 	return snapshot, payload, err
-}
-
-func writeTrafficState(path string, payload []byte) error {
-	// 复用异常退出可能留下的临时文件，避免每次重启生成额外副本。
-	tempPath := path + ".tmp"
-	file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tempPath)
-	_, err = file.Write(payload)
-	if err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return os.Rename(tempPath, path)
 }

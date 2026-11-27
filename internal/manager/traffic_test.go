@@ -21,7 +21,7 @@ func TestTrafficUsageSurvivesRestartAndRollsOverAtLocalMidnight(t *testing.T) {
 	first := time.Date(2026, 11, 30, 23, 59, 50, 0, zone)
 	before := first.Add(8 * time.Second).UTC()
 	after := first.Add(12 * time.Second).UTC()
-	collector, err := openTrafficCollector(path, zone, defaultTrafficPolicy(1))
+	collector, err := openTrafficCollector(t, path, zone, defaultTrafficPolicy(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestTrafficUsageSurvivesRestartAndRollsOverAtLocalMidnight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	collector, err = openTrafficCollector(path, zone, defaultTrafficPolicy(1))
+	collector, err = openTrafficCollector(t, path, zone, defaultTrafficPolicy(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestTrafficUsageSurvivesRestartAndRollsOverAtLocalMidnight(t *testing.T) {
 	if err := collector.save(after); err != nil {
 		t.Fatal(err)
 	}
-	collector, err = openTrafficCollector(path, zone, defaultTrafficPolicy(1))
+	collector, err = openTrafficCollector(t, path, zone, defaultTrafficPolicy(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestTrafficUsageSurvivesRestartAndRollsOverAtLocalMidnight(t *testing.T) {
 
 func TestTrafficCycleClampsToLastDayOfShortMonth(t *testing.T) {
 	at := time.Date(2024, 2, 29, 0, 0, 0, 0, time.UTC)
-	collector, err := openTrafficCollector(filepath.Join(t.TempDir(), "traffic-history.json"), time.UTC, defaultTrafficPolicy(31))
+	collector, err := openTrafficCollector(t, filepath.Join(t.TempDir(), "traffic-history.json"), time.UTC, defaultTrafficPolicy(31))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestTrafficSamplingReadsMihomoConnectionsAndRetainsBaselineOnError(t *testi
 	defer server.Close()
 
 	path := filepath.Join(t.TempDir(), "traffic-history.json")
-	collector, err := openTrafficCollector(path, time.UTC, defaultTrafficPolicy(1))
+	collector, err := openTrafficCollector(t, path, time.UTC, defaultTrafficPolicy(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestTrafficHistoryReadErrorDoesNotOverwriteFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openTrafficCollector(path, time.UTC, defaultTrafficPolicy(1)); err == nil {
+	if _, err := openTrafficCollector(t, path, time.UTC, defaultTrafficPolicy(1)); err == nil {
 		t.Fatal("无效历史文件应报告错误")
 	}
 	contents, err := os.ReadFile(path)

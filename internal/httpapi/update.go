@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+func (r *Router) handleGraydeckVersionCheck(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, r.service.CheckGraydeckVersion(req.Context()))
+}
+
 type updateRequest struct {
 	Source string `json:"source"`
 	URL    string `json:"url"`

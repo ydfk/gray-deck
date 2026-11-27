@@ -50,7 +50,7 @@ Graydeck 把 `mihomo` 日常使用中最频繁的几个操作收进同一个 Web
     </tr>
     <tr>
       <td><strong>📊 运行可观测</strong></td>
-      <td>登录鉴权、运行状态控制、核心日志、自身版本检查</td>
+      <td>登录鉴权、运行状态控制、持久日志、按 IP 或用户查询周期流量与连接明细</td>
     </tr>
   </table>
 </p>
@@ -60,16 +60,17 @@ Graydeck 把 `mihomo` 日常使用中最频繁的几个操作收进同一个 Web
 ### Docker（推荐）
 
 ```bash
-# 1. 准备目录和配置
-mkdir -p config data
+git clone https://github.com/ydfk/gray-deck.git
+cd gray-deck
+mkdir -p data
 cp docker-compose.example.yml docker-compose.yml
 
-# 2. 修改 docker-compose.yml 中的 GRAYDECK_SECRET
-# 3. （可选）在 config/ 下放置 base.yaml 和 graylevel.yaml
-
-# 4. 启动
+# 启动前修改 config/graydeck.yaml 中的登录密码，
+# 并修改 docker-compose.yml 中的 GRAYDECK_SECRET。
 docker compose up -d
 ```
+
+示例默认使用官方镜像 `ghcr.io/ydfk/graydeck:latest`。需要固定版本时，可在 `.env` 中设置 `GRAYDECK_IMAGE=ghcr.io/ydfk/graydeck:1.3.0`。从源码构建时，可以先运行 `docker build -t graydeck:local .`，再把 `GRAYDECK_IMAGE` 设为 `graydeck:local`。
 
 管理页默认监听 `8080` 端口。示例 compose 文件还映射了常用代理端口：
 
@@ -82,6 +83,17 @@ docker compose up -d
 | `7893` | `17893` | tproxy |
 
 > 只使用 HTTP/SOCKS 代理时可以移除 `NET_ADMIN` 和 `/dev/net/tun`；需要 TUN 或透明代理时保留。
+
+#### 更新现有 Docker 实例
+
+在原 Compose 目录操作，沿用原来的 `./data:/data` 和 `./config:/config` 挂载。旧版示例如果仍有 `build` 和占位镜像，请删除 `build` 段并把 `image` 改为 `ghcr.io/ydfk/graydeck:latest`。使用固定版本时，先调整镜像标签。
+
+```bash
+docker compose pull graydeck
+docker compose up -d graydeck
+```
+
+首次升级到 `1.3.0` 时会自动迁移已有数据。升级前可先运行 `docker compose stop graydeck`，再备份原配置目录和数据目录。停止时会将缓冲中的流量和日志写入数据库。
 
 ### 非 Docker 安装与更新
 
@@ -163,28 +175,36 @@ traffic:
   start: "15 08:30"
   end: "10 18:00"
   retention-months: 12
-  max-size-mib: 32
-  detail-retention-days: 7
-  detail-max-size-mib: 16
+  max-size-mib: 100
 ```
 
 - `start` 和 `end` 使用「日 HH:MM」格式。结束设定晚于开始时使用同月日期，其余情况使用次月日期。示例会从每月 15 日 08:30 统计到次月 10 日 18:00，间隔中的用量不进入该周期。省略 `end` 时，每期在下一期开始时截止。较短月份把超出的日期落到月底。
 - 时区依次取 `GRAYDECK_TIMEZONE`、`TZ` 和系统时区。省略 `start` 时仍支持原来的 `GRAYDECK_TRAFFIC_CYCLE_DAY`。已有历史按新配置汇总，切换前未按新时刻分段的旧记录只能按原有时间粒度归入周期。
-- 后台每秒采集并汇总，约每 15 秒保存到数据目录的 `traffic-history.json`。默认保留最近 12 个周期，文件上限为 32 MiB，超限时从最旧的记录开始淘汰。可配置保留 1–120 个周期及 1–256 MiB 的上限。保存时会短暂存在一个同样受限的临时文件。Docker 部署通过 `/data` 卷保留历史文件。
-- 面板日志仅在内存中保留最近 400 条。Compose 示例启用容器日志轮转，每个文件 10 MB、最多 3 个。已有容器需采用新配置重新创建后才会使用这组设置。
+- 后台每秒采集，约每 15 秒保存。月度汇总和连接明细共用 `graydeck.sqlite`，默认数据库上限为 100 MiB，空间不足时优先淘汰最旧的连接明细。可配置保留 1–120 个周期及 1–256 MiB 的共享上限。SQLite 写入时会短暂使用事务日志。
+- 面板日志存入同一数据库，默认保留最近 400 条。Compose 示例启用容器日志轮转，每个文件 10 MB、最多 3 个。已有容器需采用新配置重新创建后才会使用这组设置。
 - 用量从启用后开始累计。Mihomo 只返回活跃连接，采样间隔内结束的连接和连接关闭前尚未采集的字节可能漏计。跨周期的字节增量按采到它的时间归入对应周期。
 
 #### 连接明细
 
 在流量统计下方按所选周期或全部保留记录查询，可按使用者、目标域名、IP、节点或规则筛选。每条记录显示连接的开始及最后采样时间、目标和端口、TCP/UDP 与入站类型、实际节点、策略组链路、命中规则和累计流量。有域名嗅探结果时也会显示。Mihomo 的连接接口不提供 HTTP 方法、完整 URL、请求头或正文。
 
-明细从安装此版本后开始采集，独立保存到数据目录的 `traffic-connections.jsonl`。默认保留最近 7 天，最多 10,000 条或 16 MiB，达到上限时从最旧的记录开始清理。可设置 `detail-retention-days` 为 1–30 天、`detail-max-size-mib` 为 1–64 MiB。将保留天数设为 0 会停用明细采集和查询，已有文件仍保留在数据目录。月度汇总使用自己的保留设置。
+点击汇总表中的 IP 或用户名进入 **用量分析**。可以从每日下钻到每小时、每分钟，再按协议或域名筛选，找出当前范围内占用流量最多的连接及所走节点。
+
+明细采用共享保留周期和大小上限，不限制总条数。已有配置中显式填写的 `max-size-mib` 继续生效。旧的独立明细上限不再生效，`detail-retention-days: 0` 仍可停用明细采集和查询。旧版的月度合计和连接累计值无法还原为每分钟用量。
+
+### 后台数据与升级
+
+Graydeck 在数据目录中的 `graydeck.sqlite` 保存订阅清单和同步状态、流量汇总与明细、版本记录、面板日志和登录会话。Docker 数据目录为 `/data`。Graydeck 设置、Mihomo 基础配置、订阅 YAML 和生成的运行配置继续使用 YAML 文件。
+
+升级后首次启动会读取旧的 `subscriptions.json`、`traffic-history.json`、`traffic-connections.jsonl` 或 `traffic-connections.sqlite`。已迁移的记录之后由 `graydeck.sqlite` 读写。旧文件会保留供回滚使用，并单独占用磁盘空间。旧版登录会话保存在内存中，首次升级后需重新登录。
+
+备份时可先停止服务，再复制数据目录和配置目录。单文件部署使用原数据目录升级即可自动迁移，Docker 升级时沿用原有 `/data` 卷。
 
 ## 技术栈
 
 | 层 | 技术 |
 | --- | --- |
-| 后端 | Go 1.24 |
+| 后端 | Go 1.24 + SQLite |
 | 前端 | React 19 + TypeScript + Vite 8 |
 | 面板 | 内置 Zashboard 静态资源 |
 | 部署 | Docker / 单文件 standalone |

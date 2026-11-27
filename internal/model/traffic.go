@@ -58,10 +58,30 @@ type TrafficConnectionDetail struct {
 }
 
 type TrafficConnectionReport struct {
-	RetentionDays int                       `json:"retentionDays"`
-	MaxSizeMiB    int                       `json:"maxSizeMiB"`
-	MaxRecords    int                       `json:"maxRecords"`
-	StorageError  bool                      `json:"storageError"`
-	NextCursor    string                    `json:"nextCursor,omitempty"`
-	Items         []TrafficConnectionDetail `json:"items"`
+	Disabled     bool                      `json:"disabled"`
+	MaxSizeMiB   int                       `json:"maxSizeMiB"`
+	StorageError bool                      `json:"storageError"`
+	NextCursor   string                    `json:"nextCursor,omitempty"`
+	Items        []TrafficConnectionDetail `json:"items"`
+}
+
+type TrafficAnalysisRow struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	TrafficBytes
+}
+
+type TrafficAccessRow struct {
+	Connection TrafficConnectionDetail `json:"connection"`
+	First      time.Time               `json:"first"`
+	Last       time.Time               `json:"last"`
+	TrafficBytes
+}
+
+type TrafficAnalysisReport struct {
+	Totals    TrafficBytes         `json:"totals"`
+	Timeline  []TrafficAnalysisRow `json:"timeline"`
+	Protocols []TrafficAnalysisRow `json:"protocols"`
+	Targets   []TrafficAnalysisRow `json:"targets"`
+	Accesses  []TrafficAccessRow   `json:"accesses"`
 }

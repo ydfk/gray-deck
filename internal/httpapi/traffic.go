@@ -60,3 +60,29 @@ func (r *Router) handleTrafficConnections(w http.ResponseWriter, req *http.Reque
 		writeJSON(w, http.StatusOK, report)
 	}
 }
+
+func (r *Router) handleTrafficAnalysis(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	params := req.URL.Query()
+	group := params.Get("groupBy")
+	if group != "" && group != "user" && group != "ip" {
+		http.Error(w, "invalid groupBy", http.StatusBadRequest)
+		return
+	}
+	report, err := r.service.TrafficAnalysis(manager.TrafficAnalysisQuery{
+		TrafficConnectionQuery: manager.TrafficConnectionQuery{
+			Period: params.Get("period"), ByUser: group != "ip", Kind: params.Get("kind"), Subject: params.Get("subject"),
+		},
+		Day: params.Get("day"), Hour: params.Get("hour"), Protocol: params.Get("protocol"), Target: params.Get("target"),
+	})
+	switch {
+	case errors.Is(err, manager.ErrTrafficDetailQuery):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, manager.ErrTrafficPeriod):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, "traffic analysis unavailable", http.StatusServiceUnavailable)
+	default:
+		writeJSON(w, http.StatusOK, report)
+	}
+}

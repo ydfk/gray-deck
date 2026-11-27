@@ -38,14 +38,18 @@ type Config struct {
 type Service struct {
 	mu                 sync.RWMutex
 	cfg                Config
+	store              *stateStore
 	httpClient         *http.Client
 	status             model.SystemStatus
 	subscriptions      []model.Subscription
 	coreCmd            *exec.Cmd
 	coreDone           chan struct{}
 	logs               []model.LogEntry
+	pendingLogs        []model.LogEntry
+	logFlushMu         sync.Mutex
 	syncStopCh         chan struct{}
 	subscriptionSyncMu sync.Mutex
+	graydeckVersionMu  sync.Mutex
 	traffic            *trafficCollector
 }
 
@@ -70,7 +74,17 @@ func New(cfg Config) (*Service, error) {
 		return nil, err
 	}
 
+	store, err := openStateStore(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("打开 Graydeck 数据库：%w", err)
+	}
+	service.store = store
 	if err := service.loadSubscriptions(); err != nil {
+		store.db.Close()
+		return nil, err
+	}
+	if err := service.loadLogs(); err != nil {
+		store.db.Close()
 		return nil, err
 	}
 
@@ -88,16 +102,21 @@ func New(cfg Config) (*Service, error) {
 
 	go service.autoSyncLoop()
 	go service.trafficLoop()
+	go service.graydeckVersionLoop()
+	go service.logPersistenceLoop()
 
 	return service, nil
 }
 
+func (s *Service) Shutdown() error {
+	close(s.syncStopCh)
+	s.stopCore()
+	s.saveTraffic()
+	return s.flushLogs()
+}
+
 func (s *Service) bootstrap(ctx context.Context) error {
 	s.appendLog("开始执行启动初始化")
-
-	if err := s.refreshGraydeckMetadata(ctx); err != nil {
-		s.appendLogf("获取 Graydeck 版本失败：%v", err)
-	}
 
 	if err := s.refreshCoreMetadata(ctx); err != nil {
 		s.appendLogf("获取核心版本失败：%v", err)
@@ -213,12 +232,13 @@ func (s *Service) CreateSubscription(ctx context.Context, name, rawURL, syncInte
 		subscription.Enabled = true
 	}
 	s.subscriptions = append(s.subscriptions, subscription)
-	s.mu.Unlock()
-
-	if err := s.saveSubscriptions(); err != nil {
+	if err := s.saveSubscriptionsLocked(); err != nil {
+		s.subscriptions = s.subscriptions[:len(s.subscriptions)-1]
+		s.mu.Unlock()
 		s.appendLogf("保存配置文件失败：%s，%v", subscription.Name, err)
 		return model.Subscription{}, err
 	}
+	s.mu.Unlock()
 
 	s.appendLogf("新增配置文件完成：%s", subscription.Name)
 	return s.findSubscription(subscription.ID)
@@ -239,6 +259,8 @@ func (s *Service) UpdateSubscription(ctx context.Context, id, name, rawURL, sync
 	s.mu.Lock()
 	found := false
 	wasEnabled := false
+	var original model.Subscription
+	var edited *model.Subscription
 
 	for index := range s.subscriptions {
 		item := &s.subscriptions[index]
@@ -247,6 +269,7 @@ func (s *Service) UpdateSubscription(ctx context.Context, id, name, rawURL, sync
 		}
 
 		urlChanged := item.URL != nextURL
+		original, edited = *item, item
 		wasEnabled = item.Enabled
 
 		item.Name = nextName
@@ -270,6 +293,7 @@ func (s *Service) UpdateSubscription(ctx context.Context, id, name, rawURL, sync
 	}
 
 	if err := s.saveSubscriptionsLocked(); err != nil {
+		*edited = original
 		s.mu.Unlock()
 		s.appendLogf("保存配置文件失败：%s，%v", strings.TrimSpace(name), err)
 		return model.Subscription{}, err
@@ -304,6 +328,7 @@ func (s *Service) ActivateSubscription(ctx context.Context, id string) (model.Su
 	}
 
 	s.mu.Lock()
+	original := append([]model.Subscription(nil), s.subscriptions...)
 	for index := range s.subscriptions {
 		s.subscriptions[index].Enabled = s.subscriptions[index].ID == id
 		if s.subscriptions[index].Enabled {
@@ -313,6 +338,7 @@ func (s *Service) ActivateSubscription(ctx context.Context, id string) (model.Su
 		}
 	}
 	if err := s.saveSubscriptionsLocked(); err != nil {
+		s.subscriptions = original
 		s.mu.Unlock()
 		return model.Subscription{}, err
 	}
@@ -511,25 +537,8 @@ func (s *Service) syncSubscriptionWithTrigger(ctx context.Context, id, trigger s
 		return model.Subscription{}, err
 	}
 
-	s.updateSubscriptionStatus(id, "ready", "", true, trigger)
-	updated, err := s.findSubscription(id)
-	if err != nil {
+	if err := s.updateSubscriptionStatus(id, "ready", "", true, trigger); err != nil {
 		return model.Subscription{}, err
-	}
-
-	if updated.Enabled {
-		s.mu.Lock()
-		for index := range s.subscriptions {
-			if s.subscriptions[index].ID == id {
-				s.subscriptions[index].Status = "active"
-				break
-			}
-		}
-		if err := s.saveSubscriptionsLocked(); err != nil {
-			s.mu.Unlock()
-			return model.Subscription{}, err
-		}
-		s.mu.Unlock()
 	}
 
 	s.appendLogf("配置文件可用：%s", subscription.Name)
@@ -626,13 +635,13 @@ func (s *Service) waitCore(command *exec.Cmd, done chan struct{}) {
 	if err != nil {
 		s.status.RuntimeStatus = "error"
 		s.status.RuntimeError = fmt.Sprintf("核心进程退出：%v", err)
-		s.logs = appendLogEntry(s.logs, fmt.Sprintf("核心进程异常退出：%v", err))
+		s.appendLogLocked(fmt.Sprintf("核心进程异常退出：%v", err))
 		return
 	}
 
 	s.status.RuntimeStatus = "stopped"
 	s.status.RuntimeError = "核心进程已退出"
-	s.logs = appendLogEntry(s.logs, "核心进程已退出")
+	s.appendLogLocked("核心进程已退出")
 }
 
 func (s *Service) stopCore() {
@@ -691,7 +700,7 @@ func (s *Service) validateConfigFile(path string) error {
 	return nil
 }
 
-func (s *Service) updateSubscriptionStatus(id, status, reason string, previewAvailable bool, trigger string) {
+func (s *Service) updateSubscriptionStatus(id, status, reason string, previewAvailable bool, trigger string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -703,7 +712,11 @@ func (s *Service) updateSubscriptionStatus(id, status, reason string, previewAva
 			continue
 		}
 
+		previous := *item
 		item.Status = status
+		if status == "ready" && item.Enabled {
+			item.Status = "active"
+		}
 		item.PreviewAvailable = previewAvailable
 		item.LastSyncAt = now
 		item.LastSyncTrigger = trigger
@@ -711,10 +724,15 @@ func (s *Service) updateSubscriptionStatus(id, status, reason string, previewAva
 		if reason == "" {
 			item.LastSuccess = now
 		}
-		break
+		if err := s.saveSubscriptionsLocked(); err != nil {
+			*item = previous
+			s.appendLogLocked(fmt.Sprintf("保存订阅状态失败：%v", err))
+			return err
+		}
+		return nil
 	}
 
-	_ = s.saveSubscriptionsLocked()
+	return errors.New("配置文件不存在")
 }
 
 func (s *Service) enabledSubscription() (model.Subscription, bool) {
@@ -744,13 +762,15 @@ func (s *Service) findSubscription(id string) (model.Subscription, error) {
 }
 
 func (s *Service) loadSubscriptions() error {
-	path := s.subscriptionsFilePath()
-	data, err := os.ReadFile(path)
+	data, found, err := s.store.get(stateSubscriptions)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return os.WriteFile(path, []byte("[]\n"), 0o644)
-		}
 		return err
+	}
+	if !found {
+		data, err = os.ReadFile(filepath.Join(s.cfg.DataDir, "subscriptions.json"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 
 	if len(strings.TrimSpace(string(data))) == 0 {
@@ -767,24 +787,21 @@ func (s *Service) loadSubscriptions() error {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.subscriptions = items
-	s.mu.Unlock()
+	if !found {
+		return s.saveSubscriptionsLocked()
+	}
 	return nil
 }
 
-func (s *Service) saveSubscriptions() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveSubscriptionsLocked()
-}
-
 func (s *Service) saveSubscriptionsLocked() error {
-	data, err := json.MarshalIndent(s.subscriptions, "", "  ")
+	data, err := json.Marshal(s.subscriptions)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(s.subscriptionsFilePath(), append(data, '\n'), 0o644)
+	return s.store.put(stateSubscriptions, data)
 }
 
 func (s *Service) ensureLayout() error {
@@ -810,18 +827,31 @@ func (s *Service) ensureLayout() error {
 func (s *Service) loadInstalledVersions() {
 	coreVersion := s.detectInstalledCoreVersion()
 	zashboardVersion := s.detectInstalledZashboardVersion()
+	latest := s.cachedArtifactVersion(stateLatestVersion, "")
+	coreLatest := s.cachedArtifactVersion(stateCoreLatest, "")
+	zashboardLatest := s.cachedArtifactVersion(statePanelLatest, "")
+	for key, version := range map[string]string{stateCoreVersion: coreVersion, statePanelVersion: zashboardVersion} {
+		if version != "" && version != s.cachedArtifactVersion(key, "") {
+			if err := s.store.put(key, []byte(version)); err != nil {
+				s.appendLogf("保存已安装版本失败：%v", err)
+			}
+		}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.status.GraydeckVersion = buildinfo.Version
+	s.status.GraydeckLatestVersion = latest
 	s.status.DeploymentMode = s.cfg.DeploymentMode
 	if s.status.DeploymentMode == "" {
 		s.status.DeploymentMode = "standalone"
 	}
 	s.status.GraydeckUpdateSupported, _ = s.graydeckSelfUpdateSupported()
 	s.status.CoreVersion = coreVersion
+	s.status.CoreLatestVersion = coreLatest
 	s.status.ZashboardVersion = zashboardVersion
+	s.status.ZashboardLatestVersion = zashboardLatest
 	s.syncInstallStateLocked()
 }
 
@@ -874,10 +904,6 @@ func (s *Service) isCoreReady() bool {
 	return s.status.CoreExecutableReady
 }
 
-func (s *Service) subscriptionsFilePath() string {
-	return filepath.Join(s.cfg.DataDir, "subscriptions.json")
-}
-
 func (s *Service) subscriptionDir() string {
 	return filepath.Join(s.cfg.DataDir, "subscriptions")
 }
@@ -922,7 +948,7 @@ func (s *Service) zashboardRoot() string {
 func (s *Service) appendLog(message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.logs = appendLogEntry(s.logs, message)
+	s.appendLogLocked(message)
 }
 
 func (s *Service) syncInstallStateLocked() {
@@ -931,7 +957,9 @@ func (s *Service) syncInstallStateLocked() {
 
 	s.status.CoreIsLatest = sameVersion(s.status.CoreVersion, s.status.CoreLatestVersion)
 	s.status.ZashboardIsLatest = sameVersion(s.status.ZashboardVersion, s.status.ZashboardLatestVersion)
-	s.status.GraydeckIsLatest = sameVersion(s.status.GraydeckVersion, s.status.GraydeckLatestVersion)
+	order := compareGraydeckVersions(s.status.GraydeckLatestVersion, s.status.GraydeckVersion)
+	s.status.GraydeckUpdateAvailable = s.status.GraydeckLatestVersion != "" && order > 0
+	s.status.GraydeckIsLatest = s.status.GraydeckVersionVerified && s.status.GraydeckLatestVersion != "" && order <= 0
 
 	if s.status.ZashboardReady && s.status.ZashboardVersion == "" {
 		if s.status.ZashboardLatestVersion != "" {
@@ -987,17 +1015,4 @@ func (s *Service) RuntimeSecret() string {
 
 func (s *Service) WebRoot() string {
 	return s.cfg.WebRoot
-}
-
-func appendLogEntry(current []model.LogEntry, message string) []model.LogEntry {
-	current = append(current, model.LogEntry{
-		At:      formatLocalTime(localNow()),
-		Message: message,
-	})
-
-	if len(current) > 400 {
-		current = append([]model.LogEntry(nil), current[len(current)-400:]...)
-	}
-
-	return current
 }

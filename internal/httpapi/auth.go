@@ -2,10 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
-	"time"
 
+	"mihomo-manager/internal/manager"
 	"mihomo-manager/internal/model"
 )
 
@@ -41,14 +42,14 @@ func (r *Router) handleAuthLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if !r.service.ValidateCredentials(payload.Username, payload.Password) {
+	token, err := r.service.CreateSession(payload.Username, payload.Password)
+	if errors.Is(err, manager.ErrInvalidCredentials) {
 		http.Error(w, "用户名或密码错误", http.StatusUnauthorized)
 		return
 	}
 
-	token, err := r.sessions.Create(strings.TrimSpace(payload.Username))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "保存登录会话失败", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -59,7 +60,7 @@ func (r *Router) handleAuthLogin(w http.ResponseWriter, req *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   req.TLS != nil,
-		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		MaxAge:   int(manager.SessionLifetime.Seconds()),
 	})
 
 	writeJSON(w, http.StatusOK, model.AuthStatus{
@@ -75,7 +76,10 @@ func (r *Router) handleAuthLogout(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	r.sessions.Delete(r.sessionToken(req))
+	if err := r.service.DeleteSession(r.sessionToken(req)); err != nil {
+		http.Error(w, "注销会话失败", http.StatusServiceUnavailable)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -117,7 +121,7 @@ func (r *Router) currentUser(req *http.Request) (string, bool) {
 		return "", true
 	}
 
-	return r.sessions.Get(r.sessionToken(req))
+	return r.service.SessionUser(r.sessionToken(req))
 }
 
 func (r *Router) sessionToken(req *http.Request) string {

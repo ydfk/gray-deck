@@ -61,6 +61,7 @@ type trafficCollector struct {
 	sampleMu     sync.Mutex
 	mu           sync.RWMutex
 	path         string
+	store        *stateStore
 	location     *time.Location
 	policy       trafficPolicy
 	client       *http.Client
@@ -84,9 +85,10 @@ func trafficCycleDay(raw string) (int, error) {
 	return day, nil
 }
 
-func openTrafficCollector(path string, location *time.Location, policy trafficPolicy) (*trafficCollector, error) {
+func loadTrafficCollector(store *stateStore, path string, location *time.Location, policy trafficPolicy) (*trafficCollector, error) {
 	collector := &trafficCollector{
 		path:     path,
+		store:    store,
 		location: location,
 		policy:   policy,
 		client: &http.Client{
@@ -96,7 +98,13 @@ func openTrafficCollector(path string, location *time.Location, policy trafficPo
 			},
 		},
 	}
-	content, err := os.ReadFile(path)
+	content, found, err := store.get(stateTraffic)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		content, err = os.ReadFile(path)
+	}
 	if err == nil {
 		if err := json.Unmarshal(content, &collector.state); err != nil {
 			return nil, err
@@ -114,7 +122,7 @@ func openTrafficCollector(path string, location *time.Location, policy trafficPo
 				delete(collector.state.Days, key)
 			}
 		}
-		collector.dirty = len(content) > policy.maxBytes
+		collector.dirty = !found || len(content) > policy.summaryBudget()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -137,14 +145,20 @@ func (s *Service) initTrafficCollector() {
 		s.appendLogf("流量策略配置无效，流量采集已暂停：%v", policyErr)
 		return
 	}
-	s.traffic, err = openTrafficCollector(filepath.Join(s.cfg.DataDir, "traffic-history.json"), localTimeLocation(), policy)
+	s.traffic, err = loadTrafficCollector(s.store, filepath.Join(s.cfg.DataDir, "traffic-history.json"), localTimeLocation(), policy)
 	if err != nil {
 		s.appendLogf("无法读取流量历史：%v", err)
 		return
 	}
-	s.traffic.details, err = openTrafficDetails(filepath.Join(s.cfg.DataDir, "traffic-connections.jsonl"), policy, time.Now())
+	s.saveTraffic()
+	if err := s.trimLogs(policy.logLimit()); err != nil {
+		s.appendLogf("无法清理旧日志：%v", err)
+	}
+	details, err := s.traffic.openDetails()
 	if err != nil {
 		s.appendLogf("无法读取连接明细：%v", err)
+	} else if !policy.detailsDisabled {
+		s.traffic.details = details
 	}
 }
 
@@ -160,7 +174,6 @@ func (s *Service) trafficLoop() {
 	for {
 		select {
 		case <-s.syncStopCh:
-			s.saveTraffic()
 			return
 		case <-sampleTicker.C:
 			s.sampleTraffic()
@@ -244,9 +257,6 @@ func (c *trafficCollector) record(at time.Time, connections []trafficConnection)
 		}
 		seen[conn.ID] = struct{}{}
 		ip := trafficIP(conn.Metadata.SourceIP)
-		if c.details != nil {
-			c.details.observe(at, conn, ip)
-		}
 		last, known := c.state.Active[conn.ID]
 		// 已经在运行且没有检查点的连接先记录基线，避免重复累计。
 		latest := model.TrafficBytes{
@@ -257,10 +267,13 @@ func (c *trafficCollector) record(at time.Time, connections []trafficConnection)
 			c.state.Active[conn.ID] = latest
 			c.dirty = true
 		}
-		if !known && (conn.Start.Before(c.state.StartedAt) || conn.Start.Before(c.newSince)) {
-			continue
+		var delta model.TrafficBytes
+		if known || (!conn.Start.Before(c.state.StartedAt) && !conn.Start.Before(c.newSince)) {
+			delta = model.TrafficBytes{Upload: latest.Upload - last.Upload, Download: latest.Download - last.Download}
 		}
-		delta := model.TrafficBytes{Upload: latest.Upload - last.Upload, Download: latest.Download - last.Download}
+		if c.details != nil {
+			c.details.observe(at, conn, ip, latest, delta)
+		}
 		if delta != (model.TrafficBytes{}) {
 			c.addUsage(bucket, ip, conn.Metadata.InboundUser, delta)
 		}

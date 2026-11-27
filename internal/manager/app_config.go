@@ -71,8 +71,7 @@ func (s *Service) PreferProxyForUpdate() bool {
 	return s.loadAppSettings().updatePreferProxy
 }
 
-func (s *Service) ValidateCredentials(username, password string) bool {
-	settings := s.loadAppSettings()
+func validateCredentials(settings appSettings, username, password string) bool {
 	if !settings.authEnabled {
 		return true
 	}
@@ -123,9 +122,7 @@ traffic:
   # start: "1 00:00"
   # end: "1 00:00"
   retention-months: 12
-  max-size-mib: 32
-  detail-retention-days: 7
-  detail-max-size-mib: 16
+  max-size-mib: 100
 `) + "\n"
 }
 

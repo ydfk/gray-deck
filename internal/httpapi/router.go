@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"mihomo-manager/internal/manager"
 	"mihomo-manager/internal/model"
@@ -19,16 +18,14 @@ import (
 )
 
 type Router struct {
-	service  *manager.Service
-	mux      *http.ServeMux
-	sessions *sessionStore
+	service *manager.Service
+	mux     *http.ServeMux
 }
 
 func NewRouter(service *manager.Service) http.Handler {
 	router := &Router{
-		service:  service,
-		mux:      http.NewServeMux(),
-		sessions: newSessionStore(7 * 24 * time.Hour),
+		service: service,
+		mux:     http.NewServeMux(),
 	}
 
 	router.registerRoutes()
@@ -48,6 +45,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/system/restart", r.requireAuthAPI(r.handleSystemRestart))
 	r.mux.HandleFunc("/api/system/stop", r.requireAuthAPI(r.handleSystemStop))
 	r.mux.HandleFunc("/api/system/graydeck/update", r.requireAuthAPI(r.handleSystemGraydeckUpdate))
+	r.mux.HandleFunc("POST /api/system/graydeck/check", r.requireAuthAPI(r.handleGraydeckVersionCheck))
 	r.mux.HandleFunc("/api/system/core/update", r.requireAuthAPI(r.handleSystemCoreUpdate))
 	r.mux.HandleFunc("/api/system/core/upload", r.requireAuthAPI(r.handleSystemCoreUpload))
 	r.mux.HandleFunc("/api/zashboard/update", r.requireAuthAPI(r.handleZashboardUpdate))
@@ -61,6 +59,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/logs", r.requireAuthAPI(r.handleLogs))
 	r.mux.HandleFunc("/api/traffic", r.requireAuthAPI(r.handleTraffic))
 	r.mux.HandleFunc("/api/traffic/connections", r.requireAuthAPI(r.handleTrafficConnections))
+	r.mux.HandleFunc("GET /api/traffic/analysis", r.requireAuthAPI(r.handleTrafficAnalysis))
 	r.mux.Handle("/api/clash/", r.buildClashProxy())
 	r.mux.Handle("/api/clash", r.buildClashProxy())
 	r.mux.Handle("/zashboard-ui/", r.buildZashboardHandler())
